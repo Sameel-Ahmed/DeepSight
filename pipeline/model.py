@@ -141,7 +141,7 @@ def feature_importance_fig(model, feat_names: list, top_n: int = 20) -> go.Figur
     else:
         fig = go.Figure()
         fig.add_annotation(text="Feature importances not available for this model (e.g., non-linear SVM)",
-                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(color="#A78BFA"))
+                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(color="#2DD4BF"))
         fig.update_layout(title=f'Feature Importances', height=500, **_LAYOUT)
         return fig
 

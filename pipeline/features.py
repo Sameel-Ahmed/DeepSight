@@ -4,12 +4,12 @@ features.py — Handcrafted feature extraction for classification.
 """
 import cv2
 import numpy as np
-from skimage.feature import local_binary_pattern
+from skimage.feature import local_binary_pattern, hog
 from pipeline.enhancement import enhance_image
 from pipeline.detection import detect_salient_object
 
 
-FEATURE_DIM = 70  # 6 + 48 + 16
+FEATURE_DIM = 394  # 6 (RGB) + 48 (Hist) + 16 (LBP) + 324 (HOG)
 
 
 def extract_features(img: np.ndarray) -> list:
@@ -35,6 +35,13 @@ def extract_features(img: np.ndarray) -> list:
     lbp_hist = lbp_hist.astype(float)
     lbp_hist /= (lbp_hist.sum() + 1e-7)
     feats.extend(lbp_hist.tolist())
+    
+    # 4. HOG Shape Features (324 features)
+    # Resize to 64x64 to keep feature vector size manageable
+    img_64 = cv2.resize(gray, (64, 64))
+    hog_feats = hog(img_64, orientations=9, pixels_per_cell=(16, 16),
+                    cells_per_block=(2, 2), block_norm='L2-Hys', feature_vector=True)
+    feats.extend(hog_feats.tolist())
 
     return feats
 
@@ -47,6 +54,7 @@ def feature_names() -> list:
     for c in ch:
         names += [f'{c}_hist_{i}' for i in range(16)]
     names += [f'LBP_{i}' for i in range(16)]
+    names += [f'HOG_{i}' for i in range(324)]
     return names
 
 

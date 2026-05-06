@@ -7,70 +7,58 @@ import numpy as np
 
 def detect_salient_object(img: np.ndarray) -> tuple[tuple[int, int, int, int], np.ndarray]:
     """
-    Detects the most salient object (likely the fish) in an enhanced underwater image.
+    Detects the most salient object (the fish) using U-2-Net AI Background Removal.
     Returns:
         bbox: (x, y, w, h) of the bounding box.
-        cropped: the cropped image of the object.
+        cropped: the perfectly masked, cropped image of the object.
     """
-    # 1. Convert to grayscale
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # 2. Gaussian Blur to reduce noise
-    blurred = cv2.GaussianBlur(gray, (9, 9), 0)
-    
-    # 3. Morphological gradient to highlight edges
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    gradient = cv2.morphologyEx(blurred, cv2.MORPH_GRADIENT, kernel)
-    
-    # 4. Thresholding to create a binary mask (Otsu's method)
-    _, thresh = cv2.threshold(gradient, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # 5. Morphological closing to fill gaps
-    kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
-    closed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel_close)
-    
-    # 6. Find contours
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if not contours:
-        # Fallback: return the whole image if nothing is found
-        h, w = img.shape[:2]
-        return (0, 0, w, h), img.copy()
-    
-    # 7. Assume the largest contour is the object of interest (the fish)
-    largest_contour = max(contours, key=cv2.contourArea)
-    
-    # Filter out tiny contours just in case
-    if cv2.contourArea(largest_contour) < 500:
-        h, w = img.shape[:2]
-        return (0, 0, w, h), img.copy()
-        
-    x, y, w, h = cv2.boundingRect(largest_contour)
-    
-    # Add a small margin (padding) to the bounding box
-    margin = 15
-    H, W = img.shape[:2]
-    x1 = max(0, x - margin)
-    y1 = max(0, y - margin)
-    x2 = min(W, x + w + margin)
-    y2 = min(H, y + h + margin)
-    
-    # Add GrabCut for pixel-perfect foreground extraction
-    mask = np.zeros(img.shape[:2], np.uint8)
-    bgdModel = np.zeros((1, 65), np.float64)
-    fgdModel = np.zeros((1, 65), np.float64)
-    
-    rect = (x1, y1, x2 - x1, y2 - y1)
     try:
-        cv2.grabCut(img, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
-        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-        img_masked = img * mask2[:, :, np.newaxis]
-    except Exception:
-        img_masked = img
+        from rembg import remove, new_session
+        import PIL.Image
         
-    cropped = img_masked[y1:y2, x1:x2].copy()
-    
-    return (x1, y1, x2 - x1, y2 - y1), cropped
+        # Initialize U-2-Net session (downloads weights on first run ~170MB)
+        session = new_session('u2net')
+        
+        # Convert to PIL Image for rembg
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_img = PIL.Image.fromarray(img_rgb)
+        
+        # AI Background Removal (Returns RGBA)
+        out_pil = remove(pil_img, session=session)
+        out_np = np.array(out_pil)
+        
+        # Alpha channel is the perfect mask of the fish
+        alpha = out_np[:, :, 3]
+        
+        y_indices, x_indices = np.where(alpha > 0)
+        
+        if len(y_indices) == 0 or len(x_indices) == 0:
+            h, w = img.shape[:2]
+            return (0, 0, w, h), img.copy()
+            
+        x_min, x_max = np.min(x_indices), np.max(x_indices)
+        y_min, y_max = np.min(y_indices), np.max(y_indices)
+        
+        # Add padding margin
+        margin = 15
+        H, W = img.shape[:2]
+        x1 = max(0, x_min - margin)
+        y1 = max(0, y_min - margin)
+        x2 = min(W, x_max + margin)
+        y2 = min(H, y_max + margin)
+        
+        # Apply the perfect mask to the original BGR image
+        mask = (alpha > 0).astype(np.uint8)
+        img_masked = img * mask[:, :, np.newaxis]
+        
+        cropped = img_masked[y1:y2, x1:x2].copy()
+        
+        return (x1, y1, x2 - x1, y2 - y1), cropped
+        
+    except Exception as e:
+        print(f"Rembg detection failed: {e}")
+        h, w = img.shape[:2]
+        return (0, 0, w, h), img.copy()
 
 def draw_bounding_box(img: np.ndarray, bbox: tuple[int, int, int, int], color=(0, 255, 0), thickness=3) -> np.ndarray:
     """
