@@ -10,11 +10,25 @@ from skimage.metrics import peak_signal_noise_ratio as _psnr
 
 # ── Core functions ────────────────────────────────────────────────────────────
 
+def red_channel_compensation(img: np.ndarray, alpha: float = 1.0) -> np.ndarray:
+    """
+    Stage 1: Compensates the red channel using the green channel to counter underwater attenuation.
+    """
+    img_float = img.astype(np.float32)
+    b, g, r = cv2.split(img_float)
+    
+    mean_g = np.mean(g)
+    mean_r = np.mean(r)
+    
+    if mean_r < mean_g:
+        r = r + alpha * (mean_g - mean_r) * (1 - r / 255.0)
+        
+    r = np.clip(r, 0, 255)
+    return cv2.merge((b, g, r)).astype(np.uint8)
+
 def white_balance(img: np.ndarray) -> np.ndarray:
     """
-    Grey World Assumption white balance in LAB colour space.
-    Scales the A and B channels to remove the blue-green cast
-    typical of underwater imagery.
+    Stage 2: Grey World Assumption white balance in LAB colour space.
     """
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float64)
     avg_a = np.mean(lab[:, :, 1])
@@ -24,13 +38,19 @@ def white_balance(img: np.ndarray) -> np.ndarray:
     lab = np.clip(lab, 0, 255).astype(np.uint8)
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
+def gamma_correction(img: np.ndarray, gamma: float = 1.2) -> np.ndarray:
+    """
+    Stage 3: Adjusts brightness and reduces deep shadows.
+    """
+    inv_gamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype(np.uint8)
+    return cv2.LUT(img, table)
 
 def apply_clahe(img: np.ndarray,
                 clip_limit: float = 2.0,
                 tile_grid: tuple = (8, 8)) -> np.ndarray:
     """
-    CLAHE on the L channel of LAB colour space.
-    Improves local contrast while preserving hue (A, B channels untouched).
+    Stage 4: CLAHE on the L channel of LAB colour space for local contrast.
     """
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
@@ -38,10 +58,26 @@ def apply_clahe(img: np.ndarray,
     l_eq = clahe.apply(l)
     return cv2.cvtColor(cv2.merge((l_eq, a, b)), cv2.COLOR_LAB2BGR)
 
+def unsharp_mask(img: np.ndarray, kernel_size: tuple = (5, 5), sigma: float = 1.0, amount: float = 1.5) -> np.ndarray:
+    """
+    Stage 5: Enhances fine details.
+    """
+    blurred = cv2.GaussianBlur(img, kernel_size, sigma)
+    sharpened = float(amount + 1) * img.astype(np.float32) - float(amount) * blurred.astype(np.float32)
+    return np.clip(sharpened, 0, 255).astype(np.uint8)
+
 
 def enhance_image(img: np.ndarray) -> np.ndarray:
-    """Full pipeline: White Balance → CLAHE."""
-    return apply_clahe(white_balance(img))
+    """
+    Full 5-stage High-Quality pipeline:
+    Red Compensation → LAB White Balance → Gamma → CLAHE → Unsharp Mask.
+    """
+    img = red_channel_compensation(img)
+    img = white_balance(img)
+    img = gamma_correction(img, gamma=1.2)
+    img = apply_clahe(img)
+    img = unsharp_mask(img)
+    return img
 
 
 def compute_psnr(img_ref: np.ndarray, img_enh: np.ndarray) -> float:

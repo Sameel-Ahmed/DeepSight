@@ -5,6 +5,8 @@ features.py — Handcrafted feature extraction for classification.
 import cv2
 import numpy as np
 from skimage.feature import local_binary_pattern
+from pipeline.enhancement import enhance_image
+from pipeline.detection import detect_salient_object
 
 
 FEATURE_DIM = 70  # 6 + 48 + 16
@@ -64,7 +66,15 @@ def build_feature_matrix(image_paths: list,
             if progress_cb:
                 progress_cb((i + 1) / n)
             continue
-        X.append(extract_features(img))
+            
+        # End-to-end Pipeline: Resize -> Enhance -> Detect & Crop
+        img_r = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
+        enhanced = enhance_image(img_r)
+        _, cropped = detect_salient_object(enhanced)
+        
+        # Extract features from the detected high-quality crop
+        X.append(extract_features(cropped))
+        
         if labels is not None and i < len(labels):
             y.append(labels[i])
 

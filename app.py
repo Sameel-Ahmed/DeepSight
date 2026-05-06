@@ -18,6 +18,7 @@ from pipeline.eda           import (channel_analysis_fig, class_distribution_fig
                                     generate_insights)
 from pipeline.enhancement   import enhance_image, compute_psnr, enhance_batch
 from pipeline.features      import build_feature_matrix, feature_names, FEATURE_DIM
+from pipeline.detection     import detect_salient_object, draw_bounding_box
 from pipeline.model         import (train_model, save_model, load_model, predict_image,
                                     confusion_matrix_fig, feature_importance_fig,
                                     per_class_metrics_fig)
@@ -527,20 +528,18 @@ elif page == "4 · Enhancement":
     ds = st.session_state['dataset']
 
     st.markdown("""<div class="card">
-        <div class="card-title">Two-Stage Enhancement Pipeline</div>
+        <div class="card-title">Five-Stage High-Quality Enhancement Pipeline</div>
         <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.5rem;">
             <div style="flex:1;min-width:200px;">
-                <div style="color:#A78BFA;font-weight:600;font-size:0.88rem;">Stage 1 — White Balance</div>
+                <div style="color:#A78BFA;font-weight:600;font-size:0.88rem;">Stage 1-3 — Color & Light</div>
                 <div style="color:#7C6FAA;font-size:0.82rem;margin-top:0.3rem;line-height:1.65;">
-                    Grey World Assumption in LAB space. Removes blue-green cast by shifting
-                    A and B channels proportionally to luminance.
+                    Red Channel Compensation, LAB White Balance, and Gamma Correction to completely fix underwater attenuation and lighting.
                 </div>
             </div>
             <div style="flex:1;min-width:200px;">
-                <div style="color:#F59E0B;font-weight:600;font-size:0.88rem;">Stage 2 — CLAHE</div>
+                <div style="color:#F59E0B;font-weight:600;font-size:0.88rem;">Stage 4-5 — Contrast & Detail</div>
                 <div style="color:#7C6FAA;font-size:0.82rem;margin-top:0.3rem;line-height:1.65;">
-                    Applied on L channel only (clip=2.0, tile=8×8). Redistributes local
-                    contrast without touching hue information.
+                    CLAHE (Contrast Limited Adaptive Histogram Equalization) and Unsharp Masking to restore micro-details and scales.
                 </div>
             </div>
         </div>
@@ -621,8 +620,9 @@ elif page == "5 · Feature Extraction":
         st.stop()
 
     st.markdown("""<div class="card">
-        <div class="card-title">70-Dimensional Feature Vector per Image</div>
+        <div class="card-title">End-to-End Extraction on Salient Objects</div>
         <div style="color:#7C6FAA;font-size:0.85rem;line-height:2.0;">
+            Features are extracted from the <b>enhanced and cropped</b> object region (not the raw image).<br>
             <b style="color:#A78BFA;">6 features</b> — Mean &amp; Std per RGB channel &nbsp;|&nbsp;
             <b style="color:#A78BFA;">48 features</b> — Colour histograms (16 bins × 3 ch) &nbsp;|&nbsp;
             <b style="color:#F59E0B;">16 features</b> — LBP texture histogram (P=8, R=1)
@@ -786,9 +786,19 @@ elif page == "7 · Live Demo":
                 st.plotly_chart(fig, use_container_width=True)
 
         if model_ready:
-            st.markdown("#### Species Classification")
+            st.markdown("#### Object Detection & Species Classification")
+            
+            bbox, cropped = detect_salient_object(enhanced)
+            bbox_img = draw_bounding_box(enhanced, bbox)
+            
+            c3, c4 = st.columns(2)
+            with c3:
+                st.image(bgr_to_rgb(bbox_img), caption="Salient Object Detection", use_container_width=True)
+            with c4:
+                st.image(bgr_to_rgb(cropped), caption="Cropped Region for Classification", use_container_width=True)
+            
             md              = load_model(model_path)
-            lbl, conf, top3 = predict_image(enhanced, md)
+            lbl, conf, top3 = predict_image(cropped, md)
 
             st.markdown(f"""
             <div class="card">
