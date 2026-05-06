@@ -22,6 +22,7 @@ from pipeline.detection     import detect_salient_object, draw_bounding_box
 from pipeline.model         import (train_model, save_model, load_model, predict_image,
                                     confusion_matrix_fig, feature_importance_fig,
                                     per_class_metrics_fig)
+from ultralytics            import YOLO
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -559,8 +560,7 @@ elif page == "4 · Enhancement":
         </div>
     </div>""", unsafe_allow_html=True)
 
-    max_n   = st.slider("Images to enhance", 10, min(500, ds['total']),
-                         min(100, ds['total']), 10)
+    max_n   = st.slider("Images to enhance", 1, ds['total'], min(100, ds['total']))
     out_dir = os.path.join(os.path.dirname(__file__), 'data', 'enhanced')
 
     if st.button("✨ Run Enhancement"):
@@ -643,8 +643,7 @@ elif page == "5 · Feature Extraction":
         </div>
     </div>""", unsafe_allow_html=True)
 
-    max_n = st.slider("Max images to process", 100, min(5000, ds['total']),
-                       min(2000, ds['total']), 100)
+    max_n = st.slider("Max images to process", 1, ds['total'], min(2000, ds['total']))
 
     if st.button("🧬 Extract Features"):
         bar  = st.progress(0)
@@ -849,42 +848,55 @@ elif page == "7 · Live Demo":
         if model_ready:
             st.markdown("#### Object Detection & Species Classification")
             
-            bbox, cropped = detect_salient_object(enhanced)
-            bbox_img = draw_bounding_box(enhanced, bbox)
+            det_mode = st.radio("Detection Mode", ["Classical Saliency (Fish Masking)", "Deep Learning (YOLOv8 Objects)"], horizontal=True)
             
-            c3, c4 = st.columns(2)
-            with c3:
-                st.image(bgr_to_rgb(bbox_img), caption="Salient Object Detection", use_container_width=True)
-            with c4:
-                st.image(bgr_to_rgb(cropped), caption="Cropped Region for Classification", use_container_width=True)
-            
-            md              = load_model(model_path)
-            lbl, conf, top3 = predict_image(cropped, md)
+            if det_mode == "Deep Learning (YOLOv8 Objects)":
+                try:
+                    with st.spinner("Loading YOLOv8 AI..."):
+                        yolo_model = YOLO('yolov8n.pt')
+                    res_yolo = yolo_model(enhanced)
+                    res_plotted = res_yolo[0].plot()
+                    st.image(bgr_to_rgb(res_plotted), caption="YOLOv8 General Object Detection", use_container_width=True)
+                    st.info("💡 YOLOv8 is detecting general everyday objects (people, boats, birds). To detect specific fish species perfectly, train a custom YOLO model and replace the 'yolov8n.pt' file!")
+                except Exception as e:
+                    st.error(f"YOLO error: {e}")
+            else:
+                bbox, cropped = detect_salient_object(enhanced)
+                bbox_img = draw_bounding_box(enhanced, bbox)
+                
+                c3, c4 = st.columns(2)
+                with c3:
+                    st.image(bgr_to_rgb(bbox_img), caption="Salient Object Detection", use_container_width=True)
+                with c4:
+                    st.image(bgr_to_rgb(cropped), caption="Cropped Region for Classification", use_container_width=True)
+                
+                md              = load_model(model_path)
+                lbl, conf, top3 = predict_image(cropped, md)
 
-            st.markdown(f"""
-            <div class="card">
-                <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
-                    <div>
-                        <div style="color:#7C6FAA;font-size:0.73rem;
-                                    text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
-                        <div style="color:#10B981;font-size:1.6rem;font-weight:700;">{lbl}</div>
-                    </div>
-                    <div>
-                        <div style="color:#7C6FAA;font-size:0.73rem;
-                                    text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
-                        <div style="color:#A78BFA;font-size:1.6rem;font-weight:700;
-                                    font-family:'JetBrains Mono',monospace;">{conf}%</div>
-                    </div>
-                </div>
-            </div>""", unsafe_allow_html=True)
-
-            st.markdown("**Top 3 Predictions**")
-            for pl, pp in top3:
                 st.markdown(f"""
-                <div class="pred-bar-wrap">
-                    <div class="pred-label">{pl}</div>
-                    <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:8px;">
-                        <div class="pred-bar" style="width:{int(pp)}%;"></div>
+                <div class="card">
+                    <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
+                        <div>
+                            <div style="color:#7C6FAA;font-size:0.73rem;
+                                        text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
+                            <div style="color:#10B981;font-size:1.6rem;font-weight:700;">{lbl}</div>
+                        </div>
+                        <div>
+                            <div style="color:#7C6FAA;font-size:0.73rem;
+                                        text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
+                            <div style="color:#A78BFA;font-size:1.6rem;font-weight:700;
+                                        font-family:'JetBrains Mono',monospace;">{conf}%</div>
+                        </div>
                     </div>
-                    <div class="pred-pct">{pp}%</div>
                 </div>""", unsafe_allow_html=True)
+    
+                st.markdown("**Top 3 Predictions**")
+                for pl, pp in top3:
+                    st.markdown(f"""
+                    <div class="pred-bar-wrap">
+                        <div class="pred-label">{pl}</div>
+                        <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:8px;">
+                            <div class="pred-bar" style="width:{int(pp)}%;"></div>
+                        </div>
+                        <div class="pred-pct">{pp}%</div>
+                    </div>""", unsafe_allow_html=True)
