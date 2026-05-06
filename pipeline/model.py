@@ -6,6 +6,7 @@ import joblib
 import plotly.graph_objects as go
 import plotly.figure_factory as ff
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (accuracy_score, f1_score,
                              confusion_matrix, classification_report)
@@ -14,16 +15,24 @@ from sklearn.metrics import (accuracy_score, f1_score,
 # ── Training ──────────────────────────────────────────────────────────────────
 
 def train_model(X: np.ndarray, y: np.ndarray,
-                class_names: list, progress_cb=None) -> dict:
+                class_names: list, model_type: str = 'Random Forest',
+                n_estimators: int = 100, max_depth=None,
+                svm_c: float = 1.0, svm_kernel: str = 'rbf',
+                progress_cb=None) -> dict:
     """
-    Train a Random Forest on feature matrix X with integer labels y.
+    Train a classifier on feature matrix X with integer labels y.
     Returns a results dict with model, metrics, and plot data.
     """
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    clf = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    if model_type == 'Random Forest':
+        clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
+    elif model_type == 'SVM':
+        clf = SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42)
+    else:
+        raise ValueError(f"Unknown model type: {model_type}")
 
     if progress_cb: progress_cb(0.2)
     clf.fit(X_tr, y_tr)
@@ -124,9 +133,18 @@ def confusion_matrix_fig(cm: np.ndarray, class_names: list) -> go.Figure:
     return fig
 
 
-def feature_importance_fig(model: RandomForestClassifier,
-                            feat_names: list, top_n: int = 20) -> go.Figure:
-    imps    = model.feature_importances_
+def feature_importance_fig(model, feat_names: list, top_n: int = 20) -> go.Figure:
+    if hasattr(model, 'feature_importances_'):
+        imps = model.feature_importances_
+    elif hasattr(model, 'coef_'):
+        imps = np.abs(model.coef_[0]) if model.coef_.ndim > 1 else np.abs(model.coef_)
+    else:
+        fig = go.Figure()
+        fig.add_annotation(text="Feature importances not available for this model (e.g., non-linear SVM)",
+                           xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, font=dict(color="#A78BFA"))
+        fig.update_layout(title=f'Feature Importances', height=500, **_LAYOUT)
+        return fig
+
     indices = np.argsort(imps)[-top_n:]
 
     fig = go.Figure(go.Bar(
@@ -138,8 +156,8 @@ def feature_importance_fig(model: RandomForestClassifier,
                     showscale=False)
     ))
     fig.update_layout(
-        title=f'Top {top_n} Feature Importances (Random Forest)',
-        xaxis_title='Gini Importance',
+        title=f'Top {top_n} Feature Importances',
+        xaxis_title='Importance Score',
         height=500,
         **_LAYOUT
     )

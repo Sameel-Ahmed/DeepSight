@@ -374,11 +374,25 @@ elif page == "1 · Data Ingestion":
         </div>
     </div>""", unsafe_allow_html=True)
 
-    path_input = st.text_input(
-        "📂 Paste dataset folder path here",
-        value=st.session_state.get('dataset_path', ''),
-        placeholder="C:/Users/YourName/Downloads/Fish_Dataset"
-    )
+    c_path, c_btn = st.columns([3, 1])
+    with c_path:
+        path_input = st.text_input(
+            "📂 Paste dataset folder path here",
+            value=st.session_state.get('dataset_path', ''),
+            placeholder="C:/Users/YourName/Downloads/Fish_Dataset"
+        )
+    with c_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🚀 Auto-Detect ./data"):
+            found = False
+            for p in ['./data/Fish_Dataset', './data/uieb', './data']:
+                abs_p = os.path.abspath(p)
+                if os.path.exists(abs_p) and os.path.isdir(abs_p):
+                    st.session_state['dataset_path'] = abs_p
+                    found = True
+                    st.rerun()
+            if not found:
+                st.error("Not found.")
 
     if st.button("🔍 Load Dataset"):
         if not path_input.strip():
@@ -683,13 +697,33 @@ elif page == "6 · Model Training":
     model_path  = os.path.join(os.path.dirname(__file__), 'model.pkl')
 
     st.markdown("""<div class="card">
-        <div class="card-title">Random Forest Classifier</div>
+        <div class="card-title">Model Hyperparameters</div>
         <div style="color:#7C6FAA;font-size:0.86rem;line-height:1.9;">
-            <b style="color:#A78BFA;">Algorithm:</b> Random Forest — 100 trees, Gini criterion<br>
-            <b style="color:#A78BFA;">Split:</b> 80/20 stratified train-test<br>
-            <b style="color:#A78BFA;">Metrics:</b> Accuracy, Weighted F1, Confusion Matrix, Per-class Report
+            Configure the classifier before training.
         </div>
     </div>""", unsafe_allow_html=True)
+
+    c_m1, c_m2, c_m3 = st.columns(3)
+    with c_m1:
+        model_type = st.selectbox("Model Type", ["Random Forest", "SVM"])
+    with c_m2:
+        if model_type == "Random Forest":
+            n_estimators = st.slider("Number of Trees", 10, 200, 100, 10)
+        else:
+            svm_c = st.number_input("C (Regularization)", 0.1, 100.0, 1.0)
+    with c_m3:
+        if model_type == "Random Forest":
+            max_depth_sel = st.selectbox("Max Depth", ["None", "5", "10", "20", "50"])
+            max_depth = None if max_depth_sel == "None" else int(max_depth_sel)
+        else:
+            svm_kernel = st.selectbox("Kernel", ["rbf", "linear", "poly", "sigmoid"])
+            
+    with st.expander("🔍 See a Raw Feature Vector (Explainability)"):
+        st.markdown("This is exactly what the model sees for **one** image after feature extraction:")
+        sample_x = X[0]
+        fig_feat = go.Figure(go.Bar(y=sample_x, x=feature_names(), marker_color='#A78BFA'))
+        fig_feat.update_layout(title="70-Dimensional Feature Vector (Image 0)", height=300, margin=dict(t=30, b=0), **PLOTLY_BASE)
+        st.plotly_chart(fig_feat, use_container_width=True)
 
     if st.button("🚀 Train Model"):
         bar  = st.progress(0)
@@ -700,7 +734,11 @@ elif page == "6 · Model Training":
             info.markdown(f'<span style="color:#A78BFA;">Training {int(p*100)}%…</span>',
                           unsafe_allow_html=True)
 
-        res = train_model(X, y, class_names, progress_cb=cb)
+        if model_type == "Random Forest":
+            res = train_model(X, y, class_names, model_type=model_type, n_estimators=n_estimators, max_depth=max_depth, progress_cb=cb)
+        else:
+            res = train_model(X, y, class_names, model_type=model_type, svm_c=svm_c, svm_kernel=svm_kernel, progress_cb=cb)
+            
         save_model(res, model_path)
         st.session_state['model_results'] = res
         mark_done('training')
@@ -744,11 +782,34 @@ elif page == "7 · Live Demo":
         st.warning("No `model.pkl` found — complete Step 6 to enable classification. "
                    "Enhancement still works.")
 
-    uploaded = st.file_uploader("Upload any underwater image",
-                                type=['jpg', 'jpeg', 'png'])
+    uploaded_files = st.file_uploader("Upload underwater images (Batch supported)",
+                                type=['jpg', 'jpeg', 'png'], accept_multiple_files=True)
 
-    if uploaded:
-        raw = cv2.imdecode(np.frombuffer(uploaded.read(), np.uint8), cv2.IMREAD_COLOR)
+    if uploaded_files:
+        if len(uploaded_files) > 1:
+            st.info(f"Batch Processing {len(uploaded_files)} images...")
+            results_data = []
+            bar = st.progress(0)
+            for i, uf in enumerate(uploaded_files):
+                raw = cv2.imdecode(np.frombuffer(uf.read(), np.uint8), cv2.IMREAD_COLOR)
+                if raw is None: continue
+                raw_r    = cv2.resize(raw, (256, 256), interpolation=cv2.INTER_AREA)
+                enhanced = enhance_image(raw_r)
+                if model_ready:
+                    bbox, cropped = detect_salient_object(enhanced)
+                    md              = load_model(model_path)
+                    lbl, conf, _ = predict_image(cropped, md)
+                    results_data.append({"Filename": uf.name, "Prediction": lbl, "Confidence (%)": conf})
+                bar.progress((i + 1) / len(uploaded_files))
+            
+            if results_data:
+                df_res = pd.DataFrame(results_data)
+                st.dataframe(df_res, use_container_width=True)
+                csv = df_res.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Download Results as CSV", csv, "predictions.csv", "text/csv")
+        else:
+            uploaded = uploaded_files[0]
+            raw = cv2.imdecode(np.frombuffer(uploaded.read(), np.uint8), cv2.IMREAD_COLOR)
         if raw is None:
             st.error("Could not decode image.")
             st.stop()

@@ -55,7 +55,20 @@ def detect_salient_object(img: np.ndarray) -> tuple[tuple[int, int, int, int], n
     x2 = min(W, x + w + margin)
     y2 = min(H, y + h + margin)
     
-    cropped = img[y1:y2, x1:x2].copy()
+    # Add GrabCut for pixel-perfect foreground extraction
+    mask = np.zeros(img.shape[:2], np.uint8)
+    bgdModel = np.zeros((1, 65), np.float64)
+    fgdModel = np.zeros((1, 65), np.float64)
+    
+    rect = (x1, y1, x2 - x1, y2 - y1)
+    try:
+        cv2.grabCut(img, mask, rect, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_RECT)
+        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
+        img_masked = img * mask2[:, :, np.newaxis]
+    except Exception:
+        img_masked = img
+        
+    cropped = img_masked[y1:y2, x1:x2].copy()
     
     return (x1, y1, x2 - x1, y2 - y1), cropped
 
