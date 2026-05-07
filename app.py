@@ -25,6 +25,7 @@ from pipeline.model         import (train_model, save_model, load_model, predict
                                     per_class_metrics_fig, evaluate_model)
 from ultralytics            import YOLO
 from pipeline.yolo_trainer  import train_yolo
+from pipeline.benchmark     import run_uieb_benchmark
 
 def resize_max(img: np.ndarray, max_dim: int = 800) -> np.ndarray:
     """Resizes an image maintaining aspect ratio so its largest dimension is at most max_dim."""
@@ -230,6 +231,7 @@ PAGES = [
     ("🔧", "2 · Preprocessing"),
     ("📊", "3 · EDA"),
     ("✨", "4 · Enhancement"),
+    ("🏆", "UIEB Benchmark (Optional)"),
     ("🧬", "5 · Feature Extraction"),
     ("🤖", "6 · Model Training"),
     ("🎯", "7 · Live Demo"),
@@ -638,6 +640,7 @@ elif page == "4 · Enhancement":
             )
             if checked:
                 active_stages.add(key)
+    st.session_state['demo_active_stages'] = active_stages
 
     if not active_stages:
         st.warning("⚠️ Please enable at least one enhancement stage.")
@@ -763,6 +766,64 @@ elif page == "4 · Enhancement":
                 [r['enhanced'] for r in results[:20]])
             st.plotly_chart(fig2, use_container_width=True)
 
+
+# ─── UIEB BENCHMARK ───────────────────────────────────────────────────────────
+elif page == "UIEB Benchmark (Optional)":
+    step_header("Benchmark", "🏆", "UIEB Enhancement Benchmark")
+
+    if 'dataset' not in st.session_state:
+        st.warning("⚠️ Complete Step 1 first.")
+        st.stop()
+
+    ds = st.session_state['dataset']
+    if ds['mode'] != 'uieb':
+        st.info("Load the **UIEB Dataset** (raw + reference folders) to use this step.")
+        st.stop()
+
+    st.markdown("""<div class="card">
+        <div class="card-title">Academic Benchmark (PSNR & SSIM)</div>
+        <div style="color:#5EEAD4;font-size:0.85rem;line-height:2.0;">
+            This evaluates the currently configured enhancement pipeline across the entire benchmark dataset 
+            by comparing the pipeline outputs against the human-curated high-quality references.
+        </div>
+    </div>""", unsafe_allow_html=True)
+    
+    st.info("💡 Make sure you configured your desired enhancement stages in **Step 4** before running this benchmark.")
+
+    if st.button("🚀 Run 890-Image Benchmark"):
+        bar  = st.progress(0)
+        info = st.empty()
+
+        def cb(p):
+            bar.progress(p)
+            info.markdown(f'<span style="color:#2DD4BF;">Benchmarking {int(p*100)}%…</span>',
+                          unsafe_allow_html=True)
+        
+        # Get active stages from Step 4, or default to all
+        active_stages = st.session_state.get('demo_active_stages', set(STAGE_KEYS))
+        
+        res = run_uieb_benchmark(ds['images'], ds['references'], active_stages, progress_cb=cb)
+        
+        info.markdown('<span style="color:#10B981;">✅ Benchmark Complete!</span>', unsafe_allow_html=True)
+        
+        st.markdown("---")
+        metric_boxes([
+            (f"{res['mean_psnr']:.2f} dB", "Mean PSNR"),
+            (f"{res['mean_ssim']:.4f}", "Mean SSIM"),
+            (res['total_evaluated'], "Images Evaluated"),
+        ])
+        
+        if res['results']:
+            df = pd.DataFrame(res['results'])
+            st.dataframe(df, use_container_width=True)
+            
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Full Results (CSV)",
+                data=csv,
+                file_name='uieb_benchmark_results.csv',
+                mime='text/csv',
+            )
 
 # ─── STEP 5: FEATURE EXTRACTION ───────────────────────────────────────────────
 elif page == "5 · Feature Extraction":

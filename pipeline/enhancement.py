@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import os
 from skimage.metrics import peak_signal_noise_ratio as _psnr
+from skimage.metrics import structural_similarity as _ssim
 
 
 # ── All available stage keys (ordered) ───────────────────────────────────────
@@ -188,6 +189,13 @@ def compute_psnr(img_ref: np.ndarray, img_enh: np.ndarray) -> float:
     ref = cv2.resize(img_ref, (256, 256))
     enh = cv2.resize(img_enh, (256, 256))
     return float(_psnr(ref, enh, data_range=255))
+
+def compute_ssim(img_ref: np.ndarray, img_enh: np.ndarray) -> float:
+    """SSIM between reference and enhanced image (higher = better)."""
+    ref = cv2.resize(img_ref, (256, 256))
+    enh = cv2.resize(img_enh, (256, 256))
+    # Using win_size=3 since 256x256 is relatively small and structural elements might be fine
+    return float(_ssim(ref, enh, channel_axis=-1, data_range=255))
 
 
 # ── Batch processing ──────────────────────────────────────────────────────────
