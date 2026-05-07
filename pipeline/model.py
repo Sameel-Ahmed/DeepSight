@@ -66,7 +66,7 @@ def train_model(X: np.ndarray, y: np.ndarray,
 
     return {
         'model':       clf,
-        'class_names': present_names,   # only classes seen in test set
+        'class_names': present_names,
         'accuracy':    acc,
         'f1':          f1,
         'cm':          cm,
@@ -75,6 +75,44 @@ def train_model(X: np.ndarray, y: np.ndarray,
         'y_pred':      y_pred,
         'train_size':  len(X_tr),
         'test_size':   len(X_te),
+        'type':        model_type
+    }
+
+def evaluate_model(clf, X: np.ndarray, y: np.ndarray, class_names: list) -> dict:
+    """
+    Evaluates an already trained model on new data X, y.
+    Returns the same results dict format as train_model.
+    """
+    y_pred = clf.predict(X)
+
+    acc = accuracy_score(y, y_pred) * 100
+    f1  = f1_score(y, y_pred, average='weighted')
+
+    present_labels = sorted(np.unique(np.concatenate([y, y_pred])))
+    present_names  = [class_names[i] for i in present_labels if i < len(class_names)]
+    cm  = confusion_matrix(y, y_pred, labels=present_labels)
+    rpt = classification_report(
+        y, y_pred,
+        labels=present_labels,
+        target_names=present_names,
+        output_dict=True,
+        zero_division=0
+    )
+
+    model_type = 'Random Forest' if isinstance(clf, RandomForestClassifier) else 'SVM'
+
+    return {
+        'model':       clf,
+        'class_names': present_names,
+        'accuracy':    acc,
+        'f1':          f1,
+        'cm':          cm,
+        'report':      rpt,
+        'y_test':      y,
+        'y_pred':      y_pred,
+        'train_size':  0,
+        'test_size':   len(X),
+        'type':        model_type
     }
 
 

@@ -22,7 +22,7 @@ from pipeline.features      import build_feature_matrix, feature_names, FEATURE_
 from pipeline.detection     import detect_salient_object, draw_bounding_box
 from pipeline.model         import (train_model, save_model, load_model, predict_image,
                                     confusion_matrix_fig, feature_importance_fig,
-                                    per_class_metrics_fig)
+                                    per_class_metrics_fig, evaluate_model)
 from ultralytics            import YOLO
 from pipeline.yolo_trainer  import train_yolo
 
@@ -877,7 +877,7 @@ elif page == "6 · Model Training":
         fig_feat.update_layout(title="70-Dimensional Feature Vector (Image 0)", height=300, margin=dict(t=30, b=0), **PLOTLY_BASE)
         st.plotly_chart(fig_feat, use_container_width=True)
 
-    if st.button("🚀 Train Model"):
+    if st.button("🚀 Train New Model"):
         bar  = st.progress(0)
         info = st.empty()
 
@@ -896,6 +896,23 @@ elif page == "6 · Model Training":
         mark_done('training')
         info.markdown('<span style="color:#10B981;">✅ Model saved to model.pkl</span>',
                       unsafe_allow_html=True)
+                      
+    if os.path.exists(model_path):
+        st.markdown("---")
+        st.markdown("""<div class="card">
+            <div class="card-title">Cross-Dataset Validation</div>
+            <div style="color:#5EEAD4;font-size:0.86rem;line-height:1.9;">
+                Evaluate the previously trained model on this newly loaded dataset to test "in-the-wild" generalisation.
+            </div>
+        </div>""", unsafe_allow_html=True)
+        if st.button("🧪 Evaluate Existing Model (model.pkl)"):
+            with st.spinner("Evaluating existing model..."):
+                loaded = load_model(model_path)
+                # Ensure the class names align with the model's original training if possible
+                res = evaluate_model(loaded['model'], X, y, class_names)
+                st.session_state['model_results'] = res
+                mark_done('training')
+                st.success("✅ Cross-Dataset Evaluation Complete!")
 
     if 'model_results' in st.session_state:
         res = st.session_state['model_results']

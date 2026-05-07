@@ -28,6 +28,10 @@ def _detect_mode(root: Path):
     if raw_dir and _img_files(raw_dir):
         return 'uieb', raw_dir, ref_dir
 
+    # Check for QUT format
+    if (root / 'final_all_index.txt').exists() and (root / 'images' / 'raw_images').exists():
+        return 'qut', root / 'images' / 'raw_images', root / 'final_all_index.txt'
+
     # Check if every subdir is an image class folder
     image_subdirs = [d for d in subdirs.values() if _img_files(d)]
     if len(image_subdirs) >= 2:
@@ -42,6 +46,7 @@ def _detect_mode(root: Path):
         f"Could not detect dataset structure in: {root}\n"
         "Expected one of:\n"
         "  • UIEB   – has a 'raw' subfolder (+ optional 'reference')\n"
+        "  • QUT    – has 'images/raw_images' and 'final_all_index.txt'\n"
         "  • Class  – has ≥2 subfolders each containing images\n"
         "  • Flat   – images directly in the folder"
     )
@@ -82,6 +87,32 @@ def load_dataset(root_path: str) -> dict:
         result['images'] = _img_files(raw_dir)
         if ref_dir and ref_dir.exists():
             result['references'] = _img_files(ref_dir)
+
+    elif mode == 'qut':
+        index_file = ref_dir
+        with open(index_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            
+        unique_classes = {}
+        for line in lines:
+            parts = line.strip().split('=')
+            if len(parts) >= 4:
+                try:
+                    class_id = int(parts[0]) - 1  # 0-indexed for training
+                    class_name = parts[1]
+                    filename = parts[3] + '.jpg'
+                    
+                    img_path = str(raw_dir / filename)
+                    if os.path.exists(img_path):
+                        result['images'].append(img_path)
+                        result['labels'].append(class_id)
+                        unique_classes[class_id] = class_name
+                except ValueError:
+                    continue
+                    
+        max_id = max(unique_classes.keys()) if unique_classes else -1
+        result['class_names'] = [unique_classes.get(i, f"Class_{i}") for i in range(max_id + 1)]
+        result['class_map'] = unique_classes
 
     elif mode == 'classification':
         subdirs = sorted([d for d in root.iterdir() if d.is_dir()])
