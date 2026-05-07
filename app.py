@@ -259,13 +259,6 @@ with st.sidebar:
                 f'{completed}/{len(s_keys)} steps done</div>', unsafe_allow_html=True)
 
     st.markdown('<hr/>', unsafe_allow_html=True)
-    if st.button("🚀 Auto-Run Pipeline", use_container_width=True):
-        if 'dataset' not in st.session_state:
-            st.error("Please load a dataset in Step 1 first!")
-        else:
-            st.session_state['run_autopilot'] = True
-
-    st.markdown('<hr/>', unsafe_allow_html=True)
     st.markdown('<div style="font-size:0.7rem;color:#3D2E60;text-align:center;">'
                 'Intro to Data Science · Spring 2026<br>'
                 'Sameel Ahmed &amp; Musa Salman</div>', unsafe_allow_html=True)
@@ -455,7 +448,14 @@ elif page == "1 · Data Ingestion":
             if not found:
                 st.error("Not found.")
 
-    if st.button("🔍 Load Dataset"):
+    # ── Auto-run toggle ────────────────────────────────────────────────────────
+    auto_run = st.checkbox(
+        "⚡ Auto-run full pipeline after loading",
+        value=True,
+        help="Automatically runs Preprocessing → EDA → Enhancement → Features → Training in one click."
+    )
+
+    if st.button("🔍 Load Dataset", type="primary"):
         if not path_input.strip():
             st.error("Please enter a path.")
         else:
@@ -466,7 +466,10 @@ elif page == "1 · Data Ingestion":
                     st.session_state['dataset']      = ds
                     st.session_state['dataset_path'] = cleaned
                     mark_done('ingestion')
-                    st.success(f"✅ Loaded {ds['total']} images successfully!")
+                    st.success(f"✅ Loaded {ds['total']} images — {ds['mode']} mode detected.")
+                    if auto_run:
+                        st.session_state['run_autopilot'] = True
+                        st.rerun()   # triggers the autopilot block at the top of the page
                 except Exception as e:
                     st.error(f"❌ {e}")
                     st.markdown("""<div class="card" style="border-color:rgba(239,68,68,0.3);">
@@ -844,8 +847,36 @@ elif page == "7 · Live Demo":
         st.warning("No `model.pkl` found — complete Step 6 to enable classification. "
                    "Enhancement still works.")
 
-    uploaded_files = st.file_uploader("Upload underwater images (Batch supported)",
-                                type=['jpg', 'jpeg', 'png'], accept_multiple_files=True)
+    # ── Drag-and-drop upload zone ──────────────────────────────────────────────
+    st.markdown("""
+    <div style="
+        border: 2px dashed #0D9488;
+        border-radius: 14px;
+        padding: 1.8rem 1rem;
+        text-align: center;
+        background: rgba(13,148,136,0.06);
+        margin-bottom: 0.6rem;
+        cursor: pointer;
+    ">
+        <div style="font-size:2.4rem;line-height:1.2;">🖼️</div>
+        <div style="color:#2DD4BF;font-weight:600;font-size:1.05rem;margin-top:0.5rem;">
+            Drag &amp; Drop Images Here
+        </div>
+        <div style="color:#5EEAD4;font-size:0.82rem;margin-top:0.3rem;">
+            or click <b style="color:#FACC15;">Browse files</b> below — JPG, JPEG, PNG supported
+        </div>
+        <div style="color:#134E4A;font-size:0.75rem;margin-top:0.5rem;">
+            Batch upload supported — drop multiple files at once
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    uploaded_files = st.file_uploader(
+        "Upload underwater images",
+        type=['jpg', 'jpeg', 'png'],
+        accept_multiple_files=True,
+        label_visibility="collapsed"
+    )
 
     if uploaded_files:
         if len(uploaded_files) > 1:
