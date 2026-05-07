@@ -259,9 +259,68 @@ with st.sidebar:
                 f'{completed}/{len(s_keys)} steps done</div>', unsafe_allow_html=True)
 
     st.markdown('<hr/>', unsafe_allow_html=True)
+    if st.button("🚀 Auto-Run Pipeline", use_container_width=True):
+        if 'dataset' not in st.session_state:
+            st.error("Please load a dataset in Step 1 first!")
+        else:
+            st.session_state['run_autopilot'] = True
+
+    st.markdown('<hr/>', unsafe_allow_html=True)
     st.markdown('<div style="font-size:0.7rem;color:#3D2E60;text-align:center;">'
                 'Intro to Data Science · Spring 2026<br>'
                 'Sameel Ahmed &amp; Musa Salman</div>', unsafe_allow_html=True)
+
+
+# ─── AUTOPILOT ────────────────────────────────────────────────────────────────
+if st.session_state.get('run_autopilot', False):
+    st.session_state['run_autopilot'] = False
+    ds = st.session_state['dataset']
+    
+    # We use a placeholder to show overall progress
+    ap_msg = st.empty()
+    ap_bar = st.progress(0)
+    
+    ap_msg.info("🚀 Auto-Pilot: Preprocessing Dataset...")
+    stats  = get_dataset_stats(ds['images'])
+    sample, failed = load_sample(ds['images'], max_n=48)
+    st.session_state['pp_sample'] = sample
+    st.session_state['pp_stats']  = stats
+    st.session_state['pp_failed'] = failed
+    mark_done('preprocessing')
+    ap_bar.progress(0.2)
+    
+    ap_msg.info("🚀 Auto-Pilot: Running EDA Insights...")
+    st.session_state['insights'] = generate_insights(sample)
+    mark_done('eda')
+    ap_bar.progress(0.4)
+    
+    ap_msg.info("🚀 Auto-Pilot: Enhancing Images...")
+    max_n = min(100, ds['total'])
+    out_dir = os.path.join(os.path.dirname(__file__), 'data', 'enhanced')
+    refs = ds['references'][:max_n] if ds['references'] else None
+    results = enhance_batch(ds['images'][:max_n], out_dir, refs)
+    st.session_state['enh_results'] = results
+    mark_done('enhancement')
+    ap_bar.progress(0.6)
+    
+    if ds['mode'] == 'classification':
+        ap_msg.info("🚀 Auto-Pilot: Extracting HOG Features & Saliency Masks...")
+        max_n_feat = min(200, ds['total']) # Process up to 200 for quick auto-pilot demo
+        X, y = build_feature_matrix(ds['images'][:max_n_feat], ds['labels'][:max_n_feat])
+        st.session_state['X'] = X
+        st.session_state['y'] = y
+        mark_done('features')
+        ap_bar.progress(0.8)
+        
+        if len(np.unique(y)) > 1:
+            ap_msg.info("🚀 Auto-Pilot: Training Random Forest Model...")
+            res = train_model(X, y, ds['class_map'], model_type='Random Forest', n_estimators=100)
+            st.session_state['train_results'] = res
+            save_model(res['model'], os.path.join(os.path.dirname(__file__), 'model.pkl'))
+            mark_done('training')
+    
+    ap_bar.progress(1.0)
+    ap_msg.success("✅ Auto-Pilot Complete! Navigate to Step 7 for the Live Demo.")
 
 
 # ─── HOME ─────────────────────────────────────────────────────────────────────
