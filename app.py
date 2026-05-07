@@ -916,8 +916,8 @@ elif page == "7 · Live Demo":
     model_ready = os.path.exists(model_path)
 
     if not model_ready:
-        st.warning("No `model.pkl` found — complete Step 6 to enable classification. "
-                   "Enhancement still works.")
+        st.info("ℹ️ No `model.pkl` found — Enhancement tab fully works. "
+                "Complete Step 6 to unlock the Detection tab.")
 
     # ── Drag-and-drop upload zone ──────────────────────────────────────────────
     st.markdown("""
@@ -927,7 +927,7 @@ elif page == "7 · Live Demo":
         padding: 1.8rem 1rem;
         text-align: center;
         background: rgba(13,148,136,0.06);
-        margin-bottom: 0.6rem;
+        margin-bottom: 0.8rem;
         cursor: pointer;
     ">
         <div style="font-size:2.4rem;line-height:1.2;">🖼️</div>
@@ -950,119 +950,262 @@ elif page == "7 · Live Demo":
         label_visibility="collapsed"
     )
 
-    if uploaded_files:
-        if len(uploaded_files) > 1:
-            st.info(f"Batch Processing {len(uploaded_files)} images...")
-            results_data = []
-            bar = st.progress(0)
-            for i, uf in enumerate(uploaded_files):
-                raw = cv2.imdecode(np.frombuffer(uf.read(), np.uint8), cv2.IMREAD_COLOR)
-                if raw is None: continue
-                raw_r    = cv2.resize(raw, (256, 256), interpolation=cv2.INTER_AREA)
-                enhanced = enhance_image(raw_r)
-                if model_ready:
-                    bbox, cropped = detect_salient_object(enhanced)
-                    md              = load_model(model_path)
-                    lbl, conf, _ = predict_image(cropped, md)
-                    results_data.append({"Filename": uf.name, "Prediction": lbl, "Confidence (%)": conf})
-                bar.progress((i + 1) / len(uploaded_files))
-            
-            if results_data:
-                df_res = pd.DataFrame(results_data)
-                st.dataframe(df_res, use_container_width=True)
-                csv = df_res.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Results as CSV", csv, "predictions.csv", "text/csv")
-        else:
-            uploaded = uploaded_files[0]
-            raw = cv2.imdecode(np.frombuffer(uploaded.read(), np.uint8), cv2.IMREAD_COLOR)
+    if not uploaded_files:
+        st.stop()
+
+    # ── Decode first image ─────────────────────────────────────────────────────
+    if len(uploaded_files) == 1:
+        raw_bytes = uploaded_files[0].read()
+        raw = cv2.imdecode(np.frombuffer(raw_bytes, np.uint8), cv2.IMREAD_COLOR)
         if raw is None:
             st.error("Could not decode image.")
             st.stop()
+        raw_r = cv2.resize(raw, (256, 256), interpolation=cv2.INTER_AREA)
+    else:
+        raw_r = None   # batch mode — handled inside tabs
 
-        raw_r    = cv2.resize(raw, (256, 256), interpolation=cv2.INTER_AREA)
-        enhanced = enhance_image(raw_r)
-        psnr_val = compute_psnr(raw_r, enhanced)
+    # ══════════════════════════════════════════════════════════════════════════
+    # TABS
+    # ══════════════════════════════════════════════════════════════════════════
+    tab_enh, tab_det = st.tabs(["✨  Enhancement", "🔍  Object Detection & Classification"])
 
-        st.markdown("#### Enhancement Result")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.image(bgr_to_rgb(raw_r), caption="Original", use_container_width=True)
-        with c2:
-            st.image(bgr_to_rgb(enhanced), caption="Enhanced", use_container_width=True)
-        st.metric("PSNR (raw vs enhanced)", f"{psnr_val:.2f} dB")
+    # ┌──────────────────────────────────────────────────────────────────────┐
+    # │  TAB 1 — Enhancement                                                │
+    # └──────────────────────────────────────────────────────────────────────┘
+    with tab_enh:
+        st.markdown("""
+        <div class="card">
+            <div class="card-title">🔧 Configure Enhancement Stages</div>
+            <div style="color:#5EEAD4;font-size:0.83rem;">
+                Toggle each stage on or off. Only <b style="color:#FACC15;">checked stages</b>
+                will be applied when you run the enhancement below.
+            </div>
+        </div>""", unsafe_allow_html=True)
 
-        st.markdown("#### RGB Channel Histograms")
-        hcols = st.columns(3)
-        for i, (name, color) in enumerate([('Blue','#00B4D8'),
-                                            ('Green','#10B981'),
-                                            ('Red','#EF4444')]):
-            with hcols[i]:
-                rh = cv2.calcHist([raw_r],    [i], None, [32], [0, 256]).flatten()
-                eh = cv2.calcHist([enhanced], [i], None, [32], [0, 256]).flatten()
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(y=rh.tolist(), name='Raw',
-                                         line=dict(color='#134E4A', width=1.5),
-                                         fill='tozeroy', fillcolor='rgba(91,74,138,0.2)'))
-                fig.add_trace(go.Scatter(y=eh.tolist(), name='Enhanced',
-                                         line=dict(color=color, width=2),
-                                         fill='tozeroy', fillcolor='rgba(20,184,166,0.15)'))
-                fig.update_layout(title=name, height=200,
-                                  margin=dict(t=30, b=15, l=10, r=10),
-                                  **PLOTLY_BASE, showlegend=False)
-                st.plotly_chart(fig, use_container_width=True)
+        # Stage checkboxes — same as Step 4
+        demo_active_stages = set()
+        cb_cols = st.columns(2)
+        for i, key in enumerate(STAGE_KEYS):
+            meta = STAGE_META[key]
+            with cb_cols[i % 2]:
+                if st.checkbox(
+                    f"{meta['icon']}  {meta['label']}",
+                    value=True,
+                    key=f"demo_stage_{key}",
+                    help=meta['desc']
+                ):
+                    demo_active_stages.add(key)
 
-        if model_ready:
-            st.markdown("#### Object Detection & Species Classification")
-            
-            det_mode = st.radio("Detection Mode", ["Classical Saliency (Fish Masking)", "Deep Learning (YOLOv8 Objects)"], horizontal=True)
-            
-            if det_mode == "Deep Learning (YOLOv8 Objects)":
-                try:
-                    with st.spinner("Loading YOLOv8 AI..."):
-                        yolo_model = YOLO('yolov8n.pt')
-                    res_yolo = yolo_model(enhanced)
-                    res_plotted = res_yolo[0].plot()
-                    st.image(bgr_to_rgb(res_plotted), caption="YOLOv8 General Object Detection", use_container_width=True)
-                    st.info("💡 YOLOv8 is detecting general everyday objects (people, boats, birds). To detect specific fish species perfectly, train a custom YOLO model and replace the 'yolov8n.pt' file!")
-                except Exception as e:
-                    st.error(f"YOLO error: {e}")
+        if not demo_active_stages:
+            st.warning("⚠️ Please enable at least one stage.")
+        else:
+            # Batch mode
+            if len(uploaded_files) > 1:
+                st.info(f"Batch Processing {len(uploaded_files)} images with "
+                        f"{len(demo_active_stages)} active stages...")
+                results_data = []
+                bar = st.progress(0)
+                for i, uf in enumerate(uploaded_files):
+                    raw_b = cv2.imdecode(np.frombuffer(uf.read(), np.uint8), cv2.IMREAD_COLOR)
+                    if raw_b is None:
+                        continue
+                    raw_b = cv2.resize(raw_b, (256, 256), interpolation=cv2.INTER_AREA)
+                    enh_b = enhance_image(raw_b, demo_active_stages)
+                    if model_ready:
+                        _, cropped_b = detect_salient_object(enh_b)
+                        md_b         = load_model(model_path)
+                        lbl_b, conf_b, _ = predict_image(cropped_b, md_b)
+                        results_data.append({
+                            "Filename": uf.name,
+                            "Prediction": lbl_b,
+                            "Confidence (%)": conf_b
+                        })
+                    bar.progress((i + 1) / len(uploaded_files))
+
+                if results_data:
+                    df_res = pd.DataFrame(results_data)
+                    st.dataframe(df_res, use_container_width=True)
+                    csv = df_res.to_csv(index=False).encode('utf-8')
+                    st.download_button("📥 Download CSV", csv, "predictions.csv", "text/csv")
+
             else:
-                bbox, cropped = detect_salient_object(enhanced)
-                bbox_img = draw_bounding_box(enhanced, bbox)
-                
-                c3, c4 = st.columns(2)
-                with c3:
-                    st.image(bgr_to_rgb(bbox_img), caption="Salient Object Detection", use_container_width=True)
-                with c4:
-                    st.image(bgr_to_rgb(cropped), caption="Cropped Region for Classification", use_container_width=True)
-                
-                md              = load_model(model_path)
-                lbl, conf, top3 = predict_image(cropped, md)
+                # Single image — full enhancement + inspector
+                enhanced = enhance_image(raw_r, demo_active_stages)
+                psnr_val = compute_psnr(raw_r, enhanced)
 
-                st.markdown(f"""
-                <div class="card">
-                    <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
-                        <div>
-                            <div style="color:#5EEAD4;font-size:0.73rem;
-                                        text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
-                            <div style="color:#10B981;font-size:1.6rem;font-weight:700;">{lbl}</div>
-                        </div>
-                        <div>
-                            <div style="color:#5EEAD4;font-size:0.73rem;
-                                        text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
-                            <div style="color:#2DD4BF;font-size:1.6rem;font-weight:700;
-                                        font-family:'JetBrains Mono',monospace;">{conf}%</div>
-                        </div>
+                st.markdown("---")
+                st.markdown("""<div style="color:#2DD4BF;font-weight:700;font-size:1.05rem;
+                    margin-bottom:0.6rem;">🖼️ Before / After</div>""",
+                    unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.image(bgr_to_rgb(raw_r), caption="Original", use_container_width=True)
+                with c2:
+                    st.image(bgr_to_rgb(enhanced),
+                             caption=f"Enhanced — PSNR: {psnr_val:.2f} dB",
+                             use_container_width=True)
+                st.metric("PSNR (raw vs enhanced)", f"{psnr_val:.2f} dB")
+
+                # Stage inspector
+                stages_out, _ = enhance_image_stages(raw_r, demo_active_stages)
+                if stages_out:
+                    st.markdown("---")
+                    st.markdown("""<div style="color:#2DD4BF;font-weight:700;font-size:1.05rem;
+                        margin-bottom:0.6rem;">🔍 Stage-by-Stage Inspector
+                        <span style="color:#5EEAD4;font-weight:400;font-size:0.83rem;
+                        margin-left:0.5rem;">— click a stage to expand</span>
+                        </div>""", unsafe_allow_html=True)
+                    for stage in stages_out:
+                        with st.expander(f"{stage['icon']}  {stage['label']}", expanded=False):
+                            st.markdown(
+                                f'<div style="color:#99F6E4;font-size:0.84rem;'
+                                f'margin-bottom:0.7rem;">{stage["desc"]}</div>',
+                                unsafe_allow_html=True)
+                            s1, s2 = st.columns(2)
+                            with s1:
+                                st.image(bgr_to_rgb(stage['before']),
+                                         caption="Before", use_container_width=True)
+                            with s2:
+                                st.image(bgr_to_rgb(stage['after']),
+                                         caption="After", use_container_width=True)
+                            try:
+                                d = compute_psnr(stage['before'], stage['after'])
+                                st.markdown(
+                                    f'<div style="color:#5EEAD4;font-size:0.79rem;'
+                                    f'text-align:right;">PSNR after stage: '
+                                    f'<b style="color:#FACC15;">{d:.2f} dB</b></div>',
+                                    unsafe_allow_html=True)
+                            except Exception:
+                                pass
+
+                # RGB Channel Histograms
+                st.markdown("---")
+                st.markdown("""<div style="color:#2DD4BF;font-weight:700;font-size:1.05rem;
+                    margin-bottom:0.6rem;">📈 RGB Channel Histograms</div>""",
+                    unsafe_allow_html=True)
+                hcols = st.columns(3)
+                for idx, (ch_name, color) in enumerate([
+                        ('Blue', '#00B4D8'), ('Green', '#10B981'), ('Red', '#EF4444')]):
+                    with hcols[idx]:
+                        rh = cv2.calcHist([raw_r],    [idx], None, [32], [0, 256]).flatten()
+                        eh = cv2.calcHist([enhanced], [idx], None, [32], [0, 256]).flatten()
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(y=rh.tolist(), name='Raw',
+                                                 line=dict(color='#134E4A', width=1.5),
+                                                 fill='tozeroy',
+                                                 fillcolor='rgba(19,78,74,0.25)'))
+                        fig.add_trace(go.Scatter(y=eh.tolist(), name='Enhanced',
+                                                 line=dict(color=color, width=2),
+                                                 fill='tozeroy',
+                                                 fillcolor='rgba(20,184,166,0.15)'))
+                        fig.update_layout(title=ch_name, height=200,
+                                          margin=dict(t=30, b=15, l=10, r=10),
+                                          **PLOTLY_BASE, showlegend=False)
+                        st.plotly_chart(fig, use_container_width=True)
+
+    # ┌──────────────────────────────────────────────────────────────────────┐
+    # │  TAB 2 — Detection & Classification                                 │
+    # └──────────────────────────────────────────────────────────────────────┘
+    with tab_det:
+        if not model_ready:
+            st.warning("⚠️ No `model.pkl` found. Complete **Step 6 · Model Training** first.")
+            st.stop()
+
+        if len(uploaded_files) > 1:
+            st.info("Detection tab works on a single image. Please upload one image.")
+            st.stop()
+
+        # Use the same active stages from the Enhancement tab for consistency
+        # Run enhance using the demo_active_stages already defined above
+        try:
+            det_enhanced = enhance_image(raw_r, demo_active_stages)
+        except Exception:
+            det_enhanced = enhance_image(raw_r)
+
+        st.markdown("""
+        <div class="card">
+            <div class="card-title">🔍 Detection Mode</div>
+            <div style="color:#5EEAD4;font-size:0.83rem;">
+                Choose between classical AI background removal or deep-learning YOLOv8 detection.
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        det_mode = st.radio(
+            "Detection Mode",
+            ["🐟  Classical Saliency (U-2-Net Fish Masking)",
+             "🤖  Deep Learning (YOLOv8 Multi-Object)"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+
+        if "YOLOv8" in det_mode:
+            try:
+                with st.spinner("Loading YOLOv8 AI model..."):
+                    yolo_model = YOLO('yolov8n.pt')
+                res_yolo   = yolo_model(det_enhanced)
+                res_plotted = res_yolo[0].plot()
+                st.image(bgr_to_rgb(res_plotted),
+                         caption="YOLOv8 — General Object Detection",
+                         use_container_width=True)
+                # Show detected labels
+                names  = yolo_model.names
+                boxes  = res_yolo[0].boxes
+                if boxes is not None and len(boxes):
+                    detected = [names[int(c)] for c in boxes.cls.cpu().numpy()]
+                    unique   = list(dict.fromkeys(detected))
+                    tags_html = " ".join(
+                        f'<span class="badge badge-uieb">{d}</span>' for d in unique)
+                    st.markdown(f'<div style="margin-top:0.6rem;">'
+                                f'Detected: {tags_html}</div>',
+                                unsafe_allow_html=True)
+                st.info("💡 YOLOv8 detects 80 general object classes. Drop in a custom "
+                        "`best.pt` to detect underwater species specifically!")
+            except Exception as e:
+                st.error(f"YOLO error: {e}")
+
+        else:
+            bbox, cropped = detect_salient_object(det_enhanced)
+            bbox_img      = draw_bounding_box(det_enhanced, bbox)
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.image(bgr_to_rgb(bbox_img),
+                         caption="Salient Object Detection (U-2-Net)",
+                         use_container_width=True)
+            with c4:
+                st.image(bgr_to_rgb(cropped),
+                         caption="Cropped Region → Classifier",
+                         use_container_width=True)
+
+            md              = load_model(model_path)
+            lbl, conf, top3 = predict_image(cropped, md)
+
+            st.markdown(f"""
+            <div class="card">
+                <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
+                    <div>
+                        <div style="color:#5EEAD4;font-size:0.73rem;
+                                    text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
+                        <div style="color:#10B981;font-size:1.6rem;font-weight:700;">{lbl}</div>
                     </div>
+                    <div>
+                        <div style="color:#5EEAD4;font-size:0.73rem;
+                                    text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
+                        <div style="color:#2DD4BF;font-size:1.6rem;font-weight:700;
+                                    font-family:'JetBrains Mono',monospace;">{conf}%</div>
+                    </div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown("**Top 3 Predictions**")
+            for pl, pp in top3:
+                st.markdown(f"""
+                <div class="pred-bar-wrap">
+                    <div class="pred-label">{pl}</div>
+                    <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:8px;">
+                        <div class="pred-bar" style="width:{int(pp)}%;"></div>
+                    </div>
+                    <div class="pred-pct">{pp}%</div>
                 </div>""", unsafe_allow_html=True)
-    
-                st.markdown("**Top 3 Predictions**")
-                for pl, pp in top3:
-                    st.markdown(f"""
-                    <div class="pred-bar-wrap">
-                        <div class="pred-label">{pl}</div>
-                        <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:8px;">
-                            <div class="pred-bar" style="width:{int(pp)}%;"></div>
-                        </div>
-                        <div class="pred-pct">{pp}%</div>
-                    </div>""", unsafe_allow_html=True)
+
+
