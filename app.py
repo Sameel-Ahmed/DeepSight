@@ -164,8 +164,8 @@ hr { border-color: rgba(20,184,166,0.15) !important; }
 
 PLOTLY_BASE = dict(
     paper_bgcolor='rgba(0,0,0,0)',
-    plot_bgcolor='rgba(19,11,36,0.7)',
-    font_color='#F3F0FF'
+    plot_bgcolor='rgba(4,47,46,0.7)',
+    font_color='#F0FDFA'
 )
 
 def bgr_to_rgb(img):
@@ -305,18 +305,19 @@ if st.session_state.get('run_autopilot', False):
     
     if ds['mode'] == 'classification':
         ap_msg.info("🚀 Auto-Pilot: Extracting HOG Features & Saliency Masks...")
-        max_n_feat = min(200, ds['total']) # Process up to 200 for quick auto-pilot demo
+        max_n_feat = min(200, ds['total'])  # Up to 200 for a quick auto-pilot demo
         X, y = build_feature_matrix(ds['images'][:max_n_feat], ds['labels'][:max_n_feat])
         st.session_state['X'] = X
         st.session_state['y'] = y
+        st.session_state['feat_class_names'] = ds['class_names']  # ← Required by Step 6
         mark_done('features')
         ap_bar.progress(0.8)
         
         if len(np.unique(y)) > 1:
             ap_msg.info("🚀 Auto-Pilot: Training Random Forest Model...")
-            res = train_model(X, y, ds['class_map'], model_type='Random Forest', n_estimators=100)
-            st.session_state['train_results'] = res
-            save_model(res['model'], os.path.join(os.path.dirname(__file__), 'model.pkl'))
+            res = train_model(X, y, ds['class_names'], model_type='Random Forest', n_estimators=100)
+            st.session_state['model_results'] = res  # ← Use correct key for Step 6 display
+            save_model(res, os.path.join(os.path.dirname(__file__), 'model.pkl'))  # ← Pass full result dict
             mark_done('training')
     
     ap_bar.progress(1.0)
@@ -752,7 +753,9 @@ elif page == "6 · Model Training":
 
     X           = st.session_state['X']
     y           = st.session_state['y']
-    class_names = st.session_state['feat_class_names']
+    # Fallback: derive class_names from dataset if autopilot stored them differently
+    class_names = st.session_state.get('feat_class_names',
+                  st.session_state.get('dataset', {}).get('class_names', []))
     model_path  = os.path.join(os.path.dirname(__file__), 'model.pkl')
 
     st.markdown("""<div class="card">
