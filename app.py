@@ -16,7 +16,8 @@ from pipeline.preprocessing import load_sample, get_dataset_stats
 from pipeline.eda           import (channel_analysis_fig, class_distribution_fig,
                                     intensity_histogram_fig, channel_comparison_fig,
                                     generate_insights)
-from pipeline.enhancement   import enhance_image, compute_psnr, enhance_batch
+from pipeline.enhancement   import (enhance_image, compute_psnr, enhance_batch,
+                                    enhance_image_stages, STAGE_KEYS, STAGE_META)
 from pipeline.features      import build_feature_matrix, feature_names, FEATURE_DIM
 from pipeline.detection     import detect_salient_object, draw_bounding_box
 from pipeline.model         import (train_model, save_model, load_model, predict_image,
@@ -595,7 +596,7 @@ elif page == "3 · EDA":
         show_image_grid(sample, n_cols=5, max_n=20)
 
 
-# ─── STEP 4: ENHANCEMENT ──────────────────────────────────────────────────────
+# ─── STEP 4: ENHANCEMENT ───────────────────────────────────────────────────────────
 elif page == "4 · Enhancement":
     step_header("4", "✨", "Image Enhancement")
 
@@ -605,21 +606,41 @@ elif page == "4 · Enhancement":
 
     ds = st.session_state['dataset']
 
-    st.markdown("""<div class="card">
-        <div class="card-title">Five-Stage High-Quality Enhancement Pipeline</div>
-        <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.5rem;">
-            <div style="flex:1;min-width:200px;">
-                <div style="color:#2DD4BF;font-weight:600;font-size:0.88rem;">Stage 1-3 — Color & Light</div>
-                <div style="color:#5EEAD4;font-size:0.82rem;margin-top:0.3rem;line-height:1.65;">
-                    Red Channel Compensation, LAB White Balance, and Gamma Correction to completely fix underwater attenuation and lighting.
-                </div>
-            </div>
-            <div style="flex:1;min-width:200px;">
-                <div style="color:#F59E0B;font-weight:600;font-size:0.88rem;">Stage 4-5 — Contrast & Detail</div>
-                <div style="color:#5EEAD4;font-size:0.82rem;margin-top:0.3rem;line-height:1.65;">
-                    CLAHE (Contrast Limited Adaptive Histogram Equalization) and Unsharp Masking to restore micro-details and scales.
-                </div>
-            </div>
+    # ── Stage toggle checkboxes ───────────────────────────────────────────────
+    st.markdown("""
+    <div class="card">
+        <div class="card-title">🔧 Configure Enhancement Stages</div>
+        <div style="color:#5EEAD4;font-size:0.83rem;margin-bottom:0.8rem;">
+            Toggle each stage on or off. Only <b style="color:#FACC15;">checked stages</b>
+            will be applied in the final enhancement and batch processing.
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    active_stages = set()
+    cols_cb = st.columns(2)
+    for i, key in enumerate(STAGE_KEYS):
+        meta = STAGE_META[key]
+        with cols_cb[i % 2]:
+            checked = st.checkbox(
+                f"{meta['icon']}  {meta['label']}",
+                value=True,
+                key=f"stage_{key}",
+                help=meta['desc']
+            )
+            if checked:
+                active_stages.add(key)
+
+    if not active_stages:
+        st.warning("⚠️ Please enable at least one enhancement stage.")
+        st.stop()
+
+    # ── Run button ────────────────────────────────────────────────────────
+    st.markdown(f"""
+    <div class="card" style="margin-top:0.5rem;">
+        <div class="card-title">📂 Batch Enhancement Settings</div>
+        <div style="color:#5EEAD4;font-size:0.83rem;">
+            <b style="color:#2DD4BF;">{len(active_stages)} of {len(STAGE_KEYS)}</b>
+            stages active &nbsp;—&nbsp; only checked stages will run.
         </div>
     </div>""", unsafe_allow_html=True)
 
@@ -635,12 +656,21 @@ elif page == "4 · Enhancement":
             info.markdown(f'<span style="color:#2DD4BF;">Processing {int(p*100)}%…</span>',
                           unsafe_allow_html=True)
 
-        refs = ds['references'][:max_n] if ds['references'] else None
-        results = enhance_batch(ds['images'][:max_n], out_dir, refs, progress_cb=cb)
-        st.session_state['enh_results'] = results
+        refs    = ds['references'][:max_n] if ds['references'] else None
+        results = enhance_batch(ds['images'][:max_n], out_dir, refs,
+                                active_stages=active_stages, progress_cb=cb)
+
+        # Compute stage intermediates on first image for the inspector
+        if results:
+            stages_out, _ = enhance_image_stages(results[0]['raw'], active_stages)
+            st.session_state['enh_stages']  = stages_out
+
+        st.session_state['enh_results']  = results
+        st.session_state['enh_active']   = active_stages
         mark_done('enhancement')
         info.markdown('<span style="color:#10B981;">✅ Done!</span>', unsafe_allow_html=True)
 
+    # ── Results ─────────────────────────────────────────────────────────────
     if 'enh_results' in st.session_state:
         results   = st.session_state['enh_results']
         psnr_vals = [r['psnr'] for r in results if r['psnr'] is not None]
@@ -661,9 +691,51 @@ elif page == "4 · Enhancement":
                               yaxis_title='Count', **PLOTLY_BASE)
             st.plotly_chart(fig, use_container_width=True)
         else:
-            metric_boxes([(len(results),"Enhanced"),("N/A","PSNR (no references)")])
+            metric_boxes([(len(results), "Enhanced"), ("N/A", "PSNR (no references)")])
 
-        st.markdown("**Before / After Comparison**")
+        # ── Stage-by-Stage Inspector ────────────────────────────────────────────
+        if 'enh_stages' in st.session_state:
+            st.markdown("---")
+            st.markdown("""
+            <div style="color:#2DD4BF;font-weight:700;font-size:1.05rem;margin-bottom:0.6rem;">
+                🔍 Stage-by-Stage Inspector
+                <span style="color:#5EEAD4;font-weight:400;font-size:0.83rem;margin-left:0.5rem;">
+                    — click any stage to see its before / after
+                </span>
+            </div>""", unsafe_allow_html=True)
+
+            for stage in st.session_state['enh_stages']:
+                with st.expander(f"{stage['icon']}  {stage['label']}", expanded=False):
+                    st.markdown(
+                        f'<div style="color:#99F6E4;font-size:0.84rem;margin-bottom:0.7rem;">'
+                        f'{stage["desc"]}</div>', unsafe_allow_html=True
+                    )
+                    ca, cb_ = st.columns(2)
+                    with ca:
+                        st.image(bgr_to_rgb(stage['before']),
+                                 caption="Before this stage",
+                                 use_container_width=True)
+                    with cb_:
+                        st.image(bgr_to_rgb(stage['after']),
+                                 caption="After this stage",
+                                 use_container_width=True)
+                    # PSNR delta for this stage
+                    try:
+                        delta = compute_psnr(stage['before'], stage['after'])
+                        st.markdown(
+                            f'<div style="color:#5EEAD4;font-size:0.79rem;text-align:right;">'
+                            f'PSNR after stage: <b style="color:#FACC15;">{delta:.2f} dB</b></div>',
+                            unsafe_allow_html=True
+                        )
+                    except Exception:
+                        pass
+
+        # ── Final Before / After grid ─────────────────────────────────────────
+        st.markdown("---")
+        st.markdown("""
+        <div style="color:#2DD4BF;font-weight:700;font-size:1.05rem;margin-bottom:0.6rem;">
+            🖼️ Final Before / After Comparison
+        </div>""", unsafe_allow_html=True)
         for item in results[:6]:
             c1, c2 = st.columns(2)
             with c1:
