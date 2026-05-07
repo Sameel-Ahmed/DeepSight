@@ -24,6 +24,15 @@ from pipeline.model         import (train_model, save_model, load_model, predict
                                     confusion_matrix_fig, feature_importance_fig,
                                     per_class_metrics_fig)
 from ultralytics            import YOLO
+from pipeline.yolo_trainer  import train_yolo
+
+def resize_max(img: np.ndarray, max_dim: int = 800) -> np.ndarray:
+    """Resizes an image maintaining aspect ratio so its largest dimension is at most max_dim."""
+    h, w = img.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        return cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+    return img.copy()
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -224,6 +233,7 @@ PAGES = [
     ("🧬", "5 · Feature Extraction"),
     ("🤖", "6 · Model Training"),
     ("🎯", "7 · Live Demo"),
+    ("🛠️", "8 · YOLOv8 Training (Optional)"),
 ]
 
 with st.sidebar:
@@ -960,7 +970,7 @@ elif page == "7 · Live Demo":
         if raw is None:
             st.error("Could not decode image.")
             st.stop()
-        raw_r = cv2.resize(raw, (256, 256), interpolation=cv2.INTER_AREA)
+        raw_r = resize_max(raw, max_dim=800)
     else:
         raw_r = None   # batch mode — handled inside tabs
 
@@ -1009,7 +1019,7 @@ elif page == "7 · Live Demo":
                     raw_b = cv2.imdecode(np.frombuffer(uf.read(), np.uint8), cv2.IMREAD_COLOR)
                     if raw_b is None:
                         continue
-                    raw_b = cv2.resize(raw_b, (256, 256), interpolation=cv2.INTER_AREA)
+                    raw_b = resize_max(raw_b, max_dim=800)
                     enh_b = enhance_image(raw_b, demo_active_stages)
                     if model_ready:
                         _, cropped_b = detect_salient_object(enh_b)
@@ -1140,8 +1150,9 @@ elif page == "7 · Live Demo":
 
         if "YOLOv8" in det_mode:
             try:
-                with st.spinner("Loading YOLOv8 AI model..."):
-                    yolo_model = YOLO('yolov8n.pt')
+                yolo_path = 'yolo_custom.pt' if os.path.exists(os.path.join(os.path.dirname(__file__), 'yolo_custom.pt')) else 'yolov8n.pt'
+                with st.spinner(f"Loading {yolo_path} AI model..."):
+                    yolo_model = YOLO(yolo_path)
                 res_yolo   = yolo_model(det_enhanced)
                 res_plotted = res_yolo[0].plot()
                 st.image(bgr_to_rgb(res_plotted),
@@ -1209,3 +1220,39 @@ elif page == "7 · Live Demo":
                 </div>""", unsafe_allow_html=True)
 
 
+# ─── STEP 8: YOLOv8 TRAINING ──────────────────────────────────────────────────
+elif page == "8 · YOLOv8 Training (Optional)":
+    step_header("8", "🛠️", "YOLOv8 Training")
+    
+    st.markdown("""
+    <div class="card">
+        <div class="card-title">Train Custom Underwater Object Detector</div>
+        <div style="color:#5EEAD4;font-size:0.85rem;margin-top:0.4rem;">
+            Fine-tune the YOLOv8 model on your custom dataset (e.g. URPC2020) so the Live Demo 
+            can detect real underwater species with bounding boxes instead of generic land objects.
+        </div>
+    </div>""", unsafe_allow_html=True)
+    
+    data_yaml = st.text_input("Path to `data.yaml`", value="d:/IDS/URPC2020/data.yaml")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        epochs = st.number_input("Epochs", min_value=1, max_value=300, value=20)
+    with col2:
+        imgsz  = st.number_input("Image Size (px)", min_value=320, max_value=1280, value=640, step=32)
+        
+    st.info("💡 Note: Training requires significant processing power. If you don't have a dedicated GPU, "
+            "training for 20 epochs may take over an hour. Results will be saved automatically.")
+        
+    if st.button("🚀 Start YOLOv8 Training"):
+        if not os.path.exists(data_yaml):
+            st.error(f"Cannot find `{data_yaml}`. Please check the path.")
+        else:
+            with st.spinner("Training YOLOv8 in the background... See console for progress logs."):
+                best_model_path = train_yolo(data_yaml, epochs=epochs, imgsz=imgsz)
+            
+            if best_model_path and os.path.exists(best_model_path):
+                st.success(f"🎉 Training Complete! Best model saved to `{best_model_path}`")
+                st.info("The Live Demo will now automatically use this custom model for detection.")
+            else:
+                st.error("Training failed or `best.pt` was not generated. Check console logs.")
