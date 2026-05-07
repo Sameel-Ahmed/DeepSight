@@ -60,6 +60,46 @@ def detect_salient_object(img: np.ndarray) -> tuple[tuple[int, int, int, int], n
         h, w = img.shape[:2]
         return (0, 0, w, h), img.copy()
 
+def detect_from_mask(img: np.ndarray, mask_path: str) -> tuple[tuple[int, int, int, int], np.ndarray]:
+    """
+    Uses an existing ground truth mask to perfectly crop the fish.
+    Returns:
+        bbox: (x, y, w, h) of the bounding box.
+        cropped: the perfectly masked, cropped image of the object.
+    """
+    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        return detect_salient_object(img)
+        
+    # Resize mask to match image size if necessary
+    if mask.shape[:2] != img.shape[:2]:
+        mask = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
+        
+    y_indices, x_indices = np.where(mask > 0)
+    
+    if len(y_indices) == 0 or len(x_indices) == 0:
+        h, w = img.shape[:2]
+        return (0, 0, w, h), img.copy()
+        
+    x_min, x_max = np.min(x_indices), np.max(x_indices)
+    y_min, y_max = np.min(y_indices), np.max(y_indices)
+    
+    # Add padding margin
+    margin = 15
+    H, W = img.shape[:2]
+    x1 = max(0, x_min - margin)
+    y1 = max(0, y_min - margin)
+    x2 = min(W, x_max + margin)
+    y2 = min(H, y_max + margin)
+    
+    # Apply mask
+    binary_mask = (mask > 0).astype(np.uint8)
+    img_masked = img * binary_mask[:, :, np.newaxis]
+    
+    cropped = img_masked[y1:y2, x1:x2].copy()
+    
+    return (x1, y1, x2 - x1, y2 - y1), cropped
+
 def draw_bounding_box(img: np.ndarray, bbox: tuple[int, int, int, int], color=(0, 255, 0), thickness=3) -> np.ndarray:
     """
     Draws a bounding box on the image.

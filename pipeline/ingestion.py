@@ -85,12 +85,39 @@ def load_dataset(root_path: str) -> dict:
 
     elif mode == 'classification':
         subdirs = sorted([d for d in root.iterdir() if d.is_dir()])
+        result['gt_paths'] = {}  # image_path -> gt_mask_path
+        
         for idx, d in enumerate(subdirs):
-            imgs = _img_files(d)
-            if not imgs:
+            # Check if this class folder has nested folders (e.g. 'Trout' and 'Trout GT')
+            class_subdirs = [sd for sd in d.iterdir() if sd.is_dir()]
+            
+            raw_imgs = []
+            gt_imgs = []
+            
+            if class_subdirs:
+                # E.g. Fish_Dataset structure
+                for sd in class_subdirs:
+                    if 'gt' in sd.name.lower() or 'ground_truth' in sd.name.lower() or 'mask' in sd.name.lower():
+                        gt_imgs.extend(_img_files(sd))
+                    else:
+                        raw_imgs.extend(_img_files(sd))
+            else:
+                # Flat class structure (images directly in 'Trout/')
+                raw_imgs.extend(_img_files(d))
+            
+            if not raw_imgs:
                 continue
-            result['images'].extend(imgs)
-            result['labels'].extend([idx] * len(imgs))
+                
+            # Pair GT masks by filename if available
+            if gt_imgs:
+                gt_map = {Path(p).stem: p for p in gt_imgs}
+                for rp in raw_imgs:
+                    stem = Path(rp).stem
+                    if stem in gt_map:
+                        result['gt_paths'][rp] = gt_map[stem]
+                        
+            result['images'].extend(raw_imgs)
+            result['labels'].extend([idx] * len(raw_imgs))
             result['class_map'][idx] = d.name
             result['class_names'].append(d.name)
 

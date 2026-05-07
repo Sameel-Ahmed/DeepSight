@@ -309,8 +309,7 @@ if st.session_state.get('run_autopilot', False):
     
     if ds['mode'] == 'classification':
         ap_msg.info("🚀 Auto-Pilot: Extracting HOG Features & Saliency Masks...")
-        max_n_feat = min(200, ds['total'])  # Up to 200 for a quick auto-pilot demo
-        X, y = build_feature_matrix(ds['images'][:max_n_feat], ds['labels'][:max_n_feat])
+        X, y = build_feature_matrix(ds['images'], ds['labels'], gt_paths=ds.get('gt_paths'))
         st.session_state['X'] = X
         st.session_state['y'] = y
         st.session_state['feat_class_names'] = ds['class_names']  # ← Required by Step 6
@@ -789,6 +788,12 @@ elif page == "5 · Feature Extraction":
         </div>
     </div>""", unsafe_allow_html=True)
 
+    gt_count = len(ds.get('gt_paths', {}))
+    if gt_count > 0:
+        st.success(f"🎯 **Ground Truth Masks Found!** {gt_count} images have perfect segmentation masks. These will be used instead of AI background removal for lightning-fast, flawless crops.")
+    else:
+        st.info("🤖 No GT masks found. Using U-2-Net AI for background removal on the fly (this is slower).")
+
     max_n = st.slider("Max images to process", 1, ds['total'], min(2000, ds['total']))
 
     if st.button("🧬 Extract Features"):
@@ -801,7 +806,7 @@ elif page == "5 · Feature Extraction":
                           unsafe_allow_html=True)
 
         X, y = build_feature_matrix(ds['images'][:max_n], ds['labels'][:max_n],
-                                    progress_cb=cb)
+                                    gt_paths=ds.get('gt_paths'), progress_cb=cb)
         st.session_state['X'] = X
         st.session_state['y'] = y
         st.session_state['feat_class_names'] = ds['class_names']

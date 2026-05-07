@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from skimage.feature import local_binary_pattern, hog
 from pipeline.enhancement import enhance_image
-from pipeline.detection import detect_salient_object
+from pipeline.detection import detect_salient_object, detect_from_mask
 
 
 FEATURE_DIM = 394  # 6 (RGB) + 48 (Hist) + 16 (LBP) + 324 (HOG)
@@ -60,6 +60,7 @@ def feature_names() -> list:
 
 def build_feature_matrix(image_paths: list,
                           labels: list | None = None,
+                          gt_paths: dict | None = None,
                           progress_cb=None) -> tuple:
     """
     Returns (X: ndarray, y: ndarray | None)
@@ -78,7 +79,12 @@ def build_feature_matrix(image_paths: list,
         # End-to-end Pipeline: Resize -> Enhance -> Detect & Crop
         img_r = cv2.resize(img, (256, 256), interpolation=cv2.INTER_AREA)
         enhanced = enhance_image(img_r)
-        _, cropped = detect_salient_object(enhanced)
+        
+        # If Ground Truth mask exists, use it for a perfect, instant crop
+        if gt_paths and path in gt_paths:
+            _, cropped = detect_from_mask(enhanced, gt_paths[path])
+        else:
+            _, cropped = detect_salient_object(enhanced)
         
         # Extract features from the detected high-quality crop
         X.append(extract_features(cropped))
