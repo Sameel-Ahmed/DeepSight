@@ -23,9 +23,16 @@ def train_model(X: np.ndarray, y: np.ndarray,
     Train a classifier on feature matrix X with integer labels y.
     Returns a results dict with model, metrics, and plot data.
     """
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    # Safe split: stratify requires each class to have ≥2 samples
+    try:
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+    except ValueError:
+        # Fallback: some classes have only 1 sample — skip stratification
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
 
     if model_type == 'Random Forest':
         clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
@@ -40,18 +47,26 @@ def train_model(X: np.ndarray, y: np.ndarray,
     if progress_cb: progress_cb(0.8)
     y_pred = clf.predict(X_te)
 
-    acc  = accuracy_score(y_te, y_pred) * 100
-    f1   = f1_score(y_te, y_pred, average='weighted')
-    cm   = confusion_matrix(y_te, y_pred)
-    rpt  = classification_report(y_te, y_pred,
-                                  target_names=class_names,
-                                  output_dict=True)
+    acc = accuracy_score(y_te, y_pred) * 100
+    f1  = f1_score(y_te, y_pred, average='weighted')
+
+    # Confusion matrix: only show labels that appear in the test+pred data
+    present_labels = sorted(np.unique(np.concatenate([y_te, y_pred])))
+    present_names  = [class_names[i] for i in present_labels if i < len(class_names)]
+    cm  = confusion_matrix(y_te, y_pred, labels=present_labels)
+    rpt = classification_report(
+        y_te, y_pred,
+        labels=present_labels,
+        target_names=present_names,
+        output_dict=True,
+        zero_division=0
+    )
 
     if progress_cb: progress_cb(1.0)
 
     return {
         'model':       clf,
-        'class_names': class_names,
+        'class_names': present_names,   # only classes seen in test set
         'accuracy':    acc,
         'f1':          f1,
         'cm':          cm,
