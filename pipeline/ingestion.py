@@ -33,11 +33,14 @@ def _has_images_deep(folder: Path) -> bool:
 
 
 def _detect_mode(root: Path):
-    subdirs = {d.name.lower(): d for d in root.iterdir() if d.is_dir()}
+    try:
+        subdirs = {d.name.lower(): d for d in root.iterdir() if d.is_dir()}
+    except (PermissionError, FileNotFoundError):
+        subdirs = {}
 
+    # Check for UIEB format
     raw_dir = next((subdirs[k] for k in RAW_ALIASES if k in subdirs), None)
     ref_dir = next((subdirs[k] for k in REF_ALIASES if k in subdirs), None)
-
     if raw_dir and _img_files(raw_dir):
         return 'uieb', raw_dir, ref_dir
 
@@ -45,28 +48,21 @@ def _detect_mode(root: Path):
     if (root / 'final_all_index.txt').exists() and (root / 'images' / 'raw_images').exists():
         return 'qut', root / 'images' / 'raw_images', root / 'final_all_index.txt'
 
-    # Check if every subdir is an image class folder (ignoring GT folders)
-    image_subdirs = [d for d in subdirs.values() if _img_files(d) and not any(k in d.name.lower() for k in ['gt', 'mask', 'ground_truth'])]
-    if len(image_subdirs) >= 2:
+    # Check for Classification format (Root contains classes)
+    # A folder is a dataset if it has >= 2 subdirs that deeply contain images (ignoring GT/mask folders)
+    valid_classes = [d for d in root.iterdir() if d.is_dir() and _has_images_deep(d) and not any(k in d.name.lower() for k in ['gt', 'mask', 'ground_truth'])]
+    if len(valid_classes) >= 2:
         return 'classification', None, None
         
-    # DEEP SEARCH: If no images in root subdirs, find a folder that contains 
-    # multiple subdirectories (ignoring GT folders) that eventually contain images.
-    for sd in subdirs.values():
-        nested_subdirs = [d for d in sd.iterdir() if d.is_dir() and _has_images_deep(d) and not any(k in d.name.lower() for k in ['gt', 'mask', 'ground_truth'])]
-        if len(nested_subdirs) >= 2:
+    # Check if any subdir is actually the dataset root (one level deep)
+    for sd in root.iterdir():
+        if not sd.is_dir(): continue
+        valid_nested = [d for d in sd.iterdir() if d.is_dir() and _has_images_deep(d) and not any(k in d.name.lower() for k in ['gt', 'mask', 'ground_truth'])]
+        if len(valid_nested) >= 2:
             return 'classification', sd, None
-            
-    # Even Deeper: check if the root itself is just a single wrapper for a dataset
-    if len(subdirs) == 1:
-        wrapper = list(subdirs.values())[0]
-        deep_subdirs = [d for d in wrapper.iterdir() if d.is_dir() and _has_images_deep(d) and not any(k in d.name.lower() for k in ['gt', 'mask', 'ground_truth'])]
-        if len(deep_subdirs) >= 2:
-            return 'classification', wrapper, None
 
-    # Check root itself for images
-    root_imgs = _img_files(root)
-    if root_imgs:
+    # Check root itself for images (Flat)
+    if _img_files(root):
         return 'flat', None, None
 
     raise ValueError(
@@ -80,19 +76,9 @@ def _detect_mode(root: Path):
 
 
 def load_dataset(root_path: str) -> dict:
-    """
-    Returns
-    -------
-    dict with keys:
-        mode        : 'uieb' | 'classification' | 'flat'
-        root        : absolute path string
-        images      : list of raw image paths
-        references  : list of reference image paths (uieb only, else [])
-        labels      : list of int label indices (classification only, else [])
-        class_map   : {idx: class_name}  (classification only, else {})
-        class_names : list of class name strings
-        total       : total image count
-    """
+    # Clean the path (remove quotes if user copy-pasted with quotes)
+    root_path = root_path.strip().strip('"').strip("'")
+    
     root = Path(root_path).resolve()
     if not root.exists():
         raise ValueError(f"Path does not exist: {root_path}")
