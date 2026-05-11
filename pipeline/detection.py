@@ -33,8 +33,7 @@ def detect_salient_object(img: np.ndarray) -> tuple[tuple[int, int, int, int], n
         y_indices, x_indices = np.where(alpha > 0)
         
         if len(y_indices) == 0 or len(x_indices) == 0:
-            h, w = img.shape[:2]
-            return (0, 0, w, h), img.copy()
+            return _detect_classical(img)
             
         x_min, x_max = np.min(x_indices), np.max(x_indices)
         y_min, y_max = np.min(y_indices), np.max(y_indices)
@@ -56,9 +55,39 @@ def detect_salient_object(img: np.ndarray) -> tuple[tuple[int, int, int, int], n
         return (x1, y1, x2 - x1, y2 - y1), cropped
         
     except Exception as e:
-        print(f"Rembg detection failed: {e}")
-        h, w = img.shape[:2]
-        return (0, 0, w, h), img.copy()
+        print(f"Rembg AI detection failed, using classical CV fallback: {e}")
+        return _detect_classical(img)
+
+def _detect_classical(img: np.ndarray) -> tuple[tuple[int, int, int, int], np.ndarray]:
+    """Fallback: Uses contours on a grayscale threshold to find the fish."""
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Adaptive thresholding to handle uneven underwater lighting
+    thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                 cv2.THRESH_BINARY_INV, 11, 2)
+    
+    # Clean up noise
+    kernel = np.ones((5,5), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if contours:
+        # Find the largest contour by area (presumably the fish)
+        c = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(c)
+        
+        # Ensure the box isn't too tiny (noise) or exactly the whole image
+        H, W = img.shape[:2]
+        if w > 10 and h > 10 and (w < W * 0.98 or h < H * 0.98):
+            return (x, y, w, h), img[y:y+h, x:x+w].copy()
+
+    # Absolute fallback: Center 60% crop
+    H, W = img.shape[:2]
+    w, h = int(W * 0.6), int(H * 0.6)
+    x, y = (W - w) // 2, (H - h) // 2
+    return (x, y, w, h), img[y:y+h, x:x+w].copy()
 
 def detect_from_mask(img: np.ndarray, mask_path: str) -> tuple[tuple[int, int, int, int], np.ndarray]:
     """
