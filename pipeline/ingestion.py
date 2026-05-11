@@ -19,6 +19,19 @@ def _img_files(folder: Path) -> list:
                    if p.is_file() and p.suffix.lower() in IMG_EXTS])
 
 
+def _has_images_deep(folder: Path) -> bool:
+    """Recursively checks if a folder or any of its subfolders contain images."""
+    try:
+        if _img_files(folder):
+            return True
+        for sd in folder.iterdir():
+            if sd.is_dir() and _has_images_deep(sd):
+                return True
+    except PermissionError:
+        pass
+    return False
+
+
 def _detect_mode(root: Path):
     subdirs = {d.name.lower(): d for d in root.iterdir() if d.is_dir()}
 
@@ -37,12 +50,20 @@ def _detect_mode(root: Path):
     if len(image_subdirs) >= 2:
         return 'classification', None, None
         
-    # SMARTER CHECK: If no images in root subdirs, check one level deeper 
-    # (Handling cases like d:/IDS/Fish/Fish_Dataset/Classes...)
+    # DEEP SEARCH: If no images in root subdirs, find a folder that contains 
+    # multiple subdirectories that eventually contain images.
+    # This handles highly nested structures like Fish/Fish_Dataset/Species/Species/...
     for sd in subdirs.values():
-        nested_subdirs = [d for d in sd.iterdir() if d.is_dir() and _img_files(d)]
+        nested_subdirs = [d for d in sd.iterdir() if d.is_dir() and _has_images_deep(d)]
         if len(nested_subdirs) >= 2:
             return 'classification', sd, None
+            
+    # Even Deeper: check if the root itself is just a single wrapper for a dataset
+    if len(subdirs) == 1:
+        wrapper = list(subdirs.values())[0]
+        deep_subdirs = [d for d in wrapper.iterdir() if d.is_dir() and _has_images_deep(d)]
+        if len(deep_subdirs) >= 2:
+            return 'classification', wrapper, None
 
     # Check root itself for images
     root_imgs = _img_files(root)
