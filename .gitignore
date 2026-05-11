@@ -1,9 +1,31 @@
+# Data and Large Files
 data/
-model.pkl
+runs/
+*.pt
+*.pkl
+*.zip
+*.tar.gz
+*.csv
+
+# Python
 __pycache__/
-*.pyc
-.streamlit/secrets.toml
-.env/
-.venv/
+*.py[cod]
+*$py.class
+*.so
+.Python
 env/
 venv/
+.env/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.venv
+.env
+
+# Streamlit
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db

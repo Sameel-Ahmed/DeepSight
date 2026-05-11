@@ -766,7 +766,7 @@ elif page == "4 · Enhancement":
 
 
 # ─── UIEB BENCHMARK ───────────────────────────────────────────────────────────
-elif page == "UIEB Benchmark (Optional)":
+elif page == "UIEB Benchmark":
     step_header("Benchmark", "🏆", "UIEB Enhancement Benchmark")
 
     if 'dataset' not in st.session_state:
@@ -1029,13 +1029,18 @@ elif page == "7 · Live Demo":
             
         # ── Underwater Image Heuristic Check ──
         mean_b, mean_g, mean_r = np.mean(raw, axis=(0,1))
-        # In typical underwater images, red light is absorbed so R is much lower than B and G.
-        if mean_r > mean_b * 0.85 and mean_r > mean_g * 0.85:
+        # If red is not severely attenuated (which happens underwater)
+        is_likely_underwater = (mean_r < mean_b * 0.9) and (mean_r < mean_g * 0.9)
+        
+        force_enhance = True
+        if not is_likely_underwater:
             st.warning("⚠️ **Heuristic Warning:** This does not appear to be an underwater image. The red channel is relatively high. The enhancement algorithms (like Red Channel Compensation) are specifically designed to fix water distortion and may ruin the colors of normal terrestrial images.")
+            force_enhance = st.checkbox("Apply underwater enhancements to this image anyway?", value=False)
             
         raw_r = resize_max(raw, max_dim=800)
     else:
         raw_r = None   # batch mode — handled inside tabs
+        force_enhance = True
 
     # ══════════════════════════════════════════════════════════════════════════
     # TABS
@@ -1103,7 +1108,7 @@ elif page == "7 · Live Demo":
 
             else:
                 # Single image — full enhancement + inspector
-                enhanced = enhance_image(raw_r, demo_active_stages)
+                enhanced = enhance_image(raw_r, demo_active_stages) if force_enhance else raw_r.copy()
                 psnr_val = compute_psnr(raw_r, enhanced)
 
                 st.markdown("---")
@@ -1120,7 +1125,11 @@ elif page == "7 · Live Demo":
                 st.metric("PSNR (raw vs enhanced)", f"{psnr_val:.2f} dB")
 
                 # Stage inspector
-                stages_out, _ = enhance_image_stages(raw_r, demo_active_stages)
+                if force_enhance:
+                    stages_out, _ = enhance_image_stages(raw_r, demo_active_stages)
+                else:
+                    stages_out = []
+                    
                 if stages_out:
                     st.markdown("---")
                     st.markdown("""<div style="color:#2DD4BF;font-weight:700;font-size:1.05rem;
@@ -1189,11 +1198,10 @@ elif page == "7 · Live Demo":
             st.stop()
 
         # Use the same active stages from the Enhancement tab for consistency
-        # Run enhance using the demo_active_stages already defined above
         try:
-            det_enhanced = enhance_image(raw_r, demo_active_stages)
+            det_enhanced = enhance_image(raw_r, demo_active_stages) if force_enhance else raw_r.copy()
         except Exception:
-            det_enhanced = enhance_image(raw_r)
+            det_enhanced = raw_r.copy()
 
         st.markdown("""
         <div class="card">
