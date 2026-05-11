@@ -1,5 +1,5 @@
 """
-enhancement.py — Configurable 7-Stage Underwater Enhancement Pipeline.
+enhancement.py — Configurable 6-Stage Underwater Enhancement Pipeline.
 Each stage can be toggled on/off independently via active_stages parameter.
 """
 import cv2
@@ -16,7 +16,6 @@ STAGE_KEYS = [
     'gamma',
     'clahe',
     'unsharp',
-    'bilateral',
     'histogram_stretch',
 ]
 
@@ -47,13 +46,8 @@ STAGE_META = {
         'desc':  'Enhances fine surface textures (fish scales, fins) by subtracting a Gaussian-blurred copy from the original, amplifying edge detail.',
         'icon':  '🔬',
     },
-    'bilateral': {
-        'label': 'Stage 6 · Bilateral Denoising',
-        'desc':  'Removes sensor grain and compression noise while keeping sharp edges fully intact — an edge-aware alternative to Gaussian blur.',
-        'icon':  '🌊',
-    },
     'histogram_stretch': {
-        'label': 'Stage 7 · Histogram Stretching',
+        'label': 'Stage 6 · Histogram Stretching',
         'desc':  'Stretches the per-channel pixel range to the full 0–255 spectrum, recovering vivid colours from washed-out or low-contrast images.',
         'icon':  '🎨',
     },
@@ -132,7 +126,6 @@ _STAGE_FN = {
     'gamma':             gamma_correction,
     'clahe':             apply_clahe,
     'unsharp':           unsharp_mask,
-    'bilateral':         bilateral_denoise,
     'histogram_stretch': histogram_stretch,
 }
 
@@ -142,7 +135,7 @@ _STAGE_FN = {
 def enhance_image(img: np.ndarray, active_stages: set | None = None) -> np.ndarray:
     """
     Apply the selected enhancement stages in order.
-    If active_stages is None, all 7 stages are applied (original default behaviour).
+    If active_stages is None, all 6 stages are applied (original default behaviour).
     """
     if active_stages is None:
         active_stages = set(STAGE_KEYS)

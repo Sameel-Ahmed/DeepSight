@@ -1010,35 +1010,10 @@ elif page == "7 · Live Demo":
         st.info("ℹ️ No `model.pkl` found — Enhancement tab fully works. "
                 "Complete Step 6 to unlock the Detection tab.")
 
-    # ── Drag-and-drop upload zone ──────────────────────────────────────────────
-    st.markdown("""
-    <div style="
-        border: 2px dashed #0D9488;
-        border-radius: 14px;
-        padding: 1.8rem 1rem;
-        text-align: center;
-        background: rgba(13,148,136,0.06);
-        margin-bottom: 0.8rem;
-        cursor: pointer;
-    ">
-        <div style="font-size:2.4rem;line-height:1.2;">🖼️</div>
-        <div style="color:#2DD4BF;font-weight:600;font-size:1.05rem;margin-top:0.5rem;">
-            Drag &amp; Drop Images Here
-        </div>
-        <div style="color:#5EEAD4;font-size:0.82rem;margin-top:0.3rem;">
-            or click <b style="color:#FACC15;">Browse files</b> below — JPG, JPEG, PNG supported
-        </div>
-        <div style="color:#134E4A;font-size:0.75rem;margin-top:0.5rem;">
-            Batch upload supported — drop multiple files at once
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
     uploaded_files = st.file_uploader(
-        "Upload underwater images",
+        "📂 Upload underwater images (JPG, PNG)",
         type=['jpg', 'jpeg', 'png'],
-        accept_multiple_files=True,
-        label_visibility="collapsed"
+        accept_multiple_files=True
     )
 
     if not uploaded_files:
@@ -1051,6 +1026,13 @@ elif page == "7 · Live Demo":
         if raw is None:
             st.error("Could not decode image.")
             st.stop()
+            
+        # ── Underwater Image Heuristic Check ──
+        mean_b, mean_g, mean_r = np.mean(raw, axis=(0,1))
+        # In typical underwater images, red light is absorbed so R is much lower than B and G.
+        if mean_r > mean_b * 0.85 and mean_r > mean_g * 0.85:
+            st.warning("⚠️ **Heuristic Warning:** This does not appear to be an underwater image. The red channel is relatively high. The enhancement algorithms (like Red Channel Compensation) are specifically designed to fix water distortion and may ruin the colors of normal terrestrial images.")
+            
         raw_r = resize_max(raw, max_dim=800)
     else:
         raw_r = None   # batch mode — handled inside tabs
@@ -1217,27 +1199,27 @@ elif page == "7 · Live Demo":
         <div class="card">
             <div class="card-title">🔍 Detection Mode</div>
             <div style="color:#5EEAD4;font-size:0.83rem;">
-                Choose between classical AI background removal or deep-learning YOLOv8 detection.
+                Choose between classical AI background removal or deep-learning YOLO11 detection.
             </div>
         </div>""", unsafe_allow_html=True)
 
         det_mode = st.radio(
             "Detection Mode",
             ["🐟  Classical Saliency (U-2-Net Fish Masking)",
-             "🤖  Deep Learning (YOLOv8 Multi-Object)"],
+             "🤖  Deep Learning (YOLO11 Multi-Object)"],
             horizontal=True,
             label_visibility="collapsed"
         )
 
-        if "YOLOv8" in det_mode:
+        if "YOLO11" in det_mode:
             try:
-                yolo_path = 'yolo_custom.pt' if os.path.exists(os.path.join(os.path.dirname(__file__), 'yolo_custom.pt')) else 'yolov8n.pt'
+                yolo_path = 'yolo_custom.pt' if os.path.exists(os.path.join(os.path.dirname(__file__), 'yolo_custom.pt')) else 'yolo11n.pt'
                 with st.spinner(f"Loading {yolo_path} AI model..."):
                     yolo_model = YOLO(yolo_path)
                 res_yolo   = yolo_model(det_enhanced)
                 res_plotted = res_yolo[0].plot()
                 st.image(bgr_to_rgb(res_plotted),
-                         caption="YOLOv8 — General Object Detection",
+                         caption="YOLO11 — General Object Detection",
                          use_container_width=True)
                 # Show detected labels
                 names  = yolo_model.names
@@ -1250,7 +1232,7 @@ elif page == "7 · Live Demo":
                     st.markdown(f'<div style="margin-top:0.6rem;">'
                                 f'Detected: {tags_html}</div>',
                                 unsafe_allow_html=True)
-                st.info("💡 YOLOv8 detects 80 general object classes. Drop in a custom "
+                st.info("💡 YOLO11 detects 80 general object classes. Drop in a custom "
                         "`best.pt` to detect underwater species specifically!")
             except Exception as e:
                 st.error(f"YOLO error: {e}")
