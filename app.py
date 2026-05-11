@@ -916,17 +916,17 @@ elif page == "6 · Model Training":
 
     c_m1, c_m2, c_m3 = st.columns(3)
     with c_m1:
-        model_type = st.selectbox("Model Type", ["Random Forest", "SVM"])
+        model_type = st.selectbox("Model Type", ["Random Forest", "SVM", "Ensemble (Voting)"])
     with c_m2:
-        if model_type == "Random Forest":
+        if "Random Forest" in model_type or "Ensemble" in model_type:
             n_estimators = st.slider("Number of Trees", 10, 200, 100, 10)
-        else:
+        if "SVM" in model_type or "Ensemble" in model_type:
             svm_c = st.number_input("C (Regularization)", 0.1, 100.0, 1.0)
     with c_m3:
-        if model_type == "Random Forest":
+        if "Random Forest" in model_type or "Ensemble" in model_type:
             max_depth_sel = st.selectbox("Max Depth", ["None", "5", "10", "20", "50"])
             max_depth = None if max_depth_sel == "None" else int(max_depth_sel)
-        else:
+        if "SVM" in model_type or "Ensemble" in model_type:
             svm_kernel = st.selectbox("Kernel", ["rbf", "linear", "poly", "sigmoid"])
             
     with st.expander("🔍 See a Raw Feature Vector (Explainability)"):
@@ -947,8 +947,13 @@ elif page == "6 · Model Training":
 
         if model_type == "Random Forest":
             res = train_model(X, y, class_names, model_type=model_type, n_estimators=n_estimators, max_depth=max_depth, progress_cb=cb)
-        else:
+        elif model_type == "SVM":
             res = train_model(X, y, class_names, model_type=model_type, svm_c=svm_c, svm_kernel=svm_kernel, progress_cb=cb)
+        else:
+            # Ensemble
+            res = train_model(X, y, class_names, model_type=model_type, 
+                              n_estimators=n_estimators, max_depth=max_depth,
+                              svm_c=svm_c, svm_kernel=svm_kernel, progress_cb=cb)
             
         save_model(res, model_path)
         st.session_state['model_results'] = res

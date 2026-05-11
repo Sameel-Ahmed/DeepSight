@@ -5,7 +5,7 @@ import numpy as np
 import joblib
 import plotly.graph_objects as go
 import plotly.figure_factory as ff
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.svm import SVC
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (accuracy_score, f1_score,
@@ -38,6 +38,10 @@ def train_model(X: np.ndarray, y: np.ndarray,
         clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
     elif model_type == 'SVM':
         clf = SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42)
+    elif model_type == 'Ensemble (Voting)':
+        rf  = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
+        svm = SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42)
+        clf = VotingClassifier(estimators=[('rf', rf), ('svm', svm)], voting='soft')
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
