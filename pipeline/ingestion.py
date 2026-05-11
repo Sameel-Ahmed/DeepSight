@@ -36,6 +36,13 @@ def _detect_mode(root: Path):
     image_subdirs = [d for d in subdirs.values() if _img_files(d)]
     if len(image_subdirs) >= 2:
         return 'classification', None, None
+        
+    # SMARTER CHECK: If no images in root subdirs, check one level deeper 
+    # (Handling cases like d:/IDS/Fish/Fish_Dataset/Classes...)
+    for sd in subdirs.values():
+        nested_subdirs = [d for d in sd.iterdir() if d.is_dir() and _img_files(d)]
+        if len(nested_subdirs) >= 2:
+            return 'classification', sd, None
 
     # Check root itself for images
     root_imgs = _img_files(root)
@@ -115,7 +122,8 @@ def load_dataset(root_path: str) -> dict:
         result['class_map'] = unique_classes
 
     elif mode == 'classification':
-        subdirs = sorted([d for d in root.iterdir() if d.is_dir()])
+        base_dir = raw_dir if raw_dir else root
+        subdirs = sorted([d for d in base_dir.iterdir() if d.is_dir()])
         result['gt_paths'] = {}  # image_path -> gt_mask_path
         
         for idx, d in enumerate(subdirs):
