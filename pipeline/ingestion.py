@@ -168,13 +168,21 @@ def load_dataset(root_path: str) -> dict:
             if not raw_imgs:
                 continue
                 
-            # Pair GT masks by filename if available
+            # Pair GT masks by filename (Fuzzy Matching)
             if gt_imgs:
-                gt_map = {Path(p).stem: p for p in gt_imgs}
+                gt_map = {Path(p).stem.lower(): p for p in gt_imgs}
                 for rp in raw_imgs:
-                    stem = Path(rp).stem
-                    if stem in gt_map:
-                        result['gt_paths'][rp] = gt_map[stem]
+                    r_stem = Path(rp).stem.lower()
+                    # 1. Try exact match
+                    if r_stem in gt_map:
+                        result['gt_paths'][rp] = gt_map[r_stem]
+                        continue
+                    
+                    # 2. Try fuzzy match (e.g. '00001' matching '00001_gt' or '00001_mask')
+                    for g_stem, g_path in gt_map.items():
+                        if r_stem in g_stem or g_stem in r_stem:
+                            result['gt_paths'][rp] = g_path
+                            break
                         
             result['images'].extend(raw_imgs)
             result['labels'].extend([idx] * len(raw_imgs))
