@@ -40,7 +40,7 @@ def detect_salient_object(img: np.ndarray) -> tuple[tuple[int, int, int, int], n
         
         # Check if the mask is just a tiny speck (false positive)
         H, W = img.shape[:2]
-        if (x_max - x_min) < W * 0.15 or (y_max - y_min) < H * 0.15:
+        if (x_max - x_min) < W * 0.10 or (y_max - y_min) < H * 0.10:
             return _detect_classical(img)
         
         # Add padding margin
@@ -85,7 +85,7 @@ def _detect_classical(img: np.ndarray) -> tuple[tuple[int, int, int, int], np.nd
         
         # Ensure the box isn't too tiny (noise) or exactly the whole image
         H, W = img.shape[:2]
-        if w > W * 0.20 and h > H * 0.20 and (w < W * 0.98 or h < H * 0.98):
+        if w > W * 0.15 and h > H * 0.15 and (w < W * 0.95 or h < H * 0.95):
             return (x, y, w, h), img[y:y+h, x:x+w].copy()
 
     # Absolute fallback: Center 60% crop
