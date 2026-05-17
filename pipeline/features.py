@@ -1,6 +1,6 @@
 """
 features.py — Handcrafted feature extraction for classification.
-70 features per image: RGB stats (6) + colour histograms (48) + LBP texture (16).
+1872 features per image: RGB stats (12) + colour histograms (48) + Multi-Scale LBP (48) + HOG (1764).
 """
 import cv2
 import numpy as np
@@ -10,7 +10,7 @@ from pipeline.enhancement import enhance_image
 from pipeline.detection import detect_salient_object, detect_from_mask
 
 
-FEATURE_DIM = 1840  # 12 (RGB) + 48 (Hist) + 16 (LBP) + 1764 (HOG)
+FEATURE_DIM = 1872  # 12 (RGB) + 48 (Hist) + 48 (Multi-Scale LBP) + 1764 (HOG)
 
 
 def extract_features(img: np.ndarray) -> list:
@@ -32,13 +32,16 @@ def extract_features(img: np.ndarray) -> list:
         hist /= (hist.sum() + 1e-7)
         feats.extend(hist.tolist())
 
-    # 3. LBP texture histogram – 16 bins  (16 features)
+    # 3. Multi-Scale LBP texture histograms – 16 bins × 3 scales  (48 features)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    lbp  = local_binary_pattern(gray, P=8, R=1, method='uniform')
-    lbp_hist, _ = np.histogram(lbp.ravel(), bins=16, range=(0, 16))
-    lbp_hist = lbp_hist.astype(float)
-    lbp_hist /= (lbp_hist.sum() + 1e-7)
-    feats.extend(lbp_hist.tolist())
+    for radius in [1, 2, 3]:
+        n_points = 8 * radius
+        lbp = local_binary_pattern(gray, P=n_points, R=radius, method='uniform')
+        n_bins = n_points + 2  # uniform LBP produces P+2 unique values
+        lbp_hist, _ = np.histogram(lbp.ravel(), bins=16, range=(0, n_bins))
+        lbp_hist = lbp_hist.astype(float)
+        lbp_hist /= (lbp_hist.sum() + 1e-7)
+        feats.extend(lbp_hist.tolist())
     
     # 4. HOG Shape Features (1764 features)
     # Resize to 64x64 to keep feature vector size manageable
@@ -57,7 +60,8 @@ def feature_names() -> list:
         names += [f'{c}_mean', f'{c}_std', f'{c}_skew', f'{c}_kurt']
     for c in ch:
         names += [f'{c}_hist_{i}' for i in range(16)]
-    names += [f'LBP_{i}' for i in range(16)]
+    for r in [1, 2, 3]:
+        names += [f'LBP_R{r}_{i}' for i in range(16)]
     names += [f'HOG_{i}' for i in range(1764)]
     return names
 
@@ -65,10 +69,12 @@ def feature_names() -> list:
 def build_feature_matrix(image_paths: list,
                           labels: list | None = None,
                           gt_paths: dict | None = None,
+                          augment: bool = True,
                           progress_cb=None) -> tuple:
     """
     Returns (X: ndarray, y: ndarray | None)
     Skips unreadable images; corresponding labels are also skipped.
+    If augment=True, each image is also horizontally flipped to double training data.
     """
     X, y = [], []
     n = len(image_paths)
@@ -92,9 +98,15 @@ def build_feature_matrix(image_paths: list,
         
         # Extract features from the detected high-quality crop
         X.append(extract_features(cropped))
-        
         if labels is not None and i < len(labels):
             y.append(labels[i])
+        
+        # Data Augmentation: Horizontal flip doubles the training set
+        if augment:
+            flipped = cv2.flip(cropped, 1)  # 1 = horizontal flip
+            X.append(extract_features(flipped))
+            if labels is not None and i < len(labels):
+                y.append(labels[i])
 
         if progress_cb:
             progress_cb((i + 1) / n)

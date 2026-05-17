@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 import plotly.figure_factory as ff
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.svm import SVC
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (accuracy_score, f1_score,
                              confusion_matrix, classification_report)
@@ -35,12 +37,18 @@ def train_model(X: np.ndarray, y: np.ndarray,
         )
 
     if model_type == 'Random Forest':
-        clf = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
+        clf = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1))
+        ])
     elif model_type == 'SVM':
-        clf = SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42)
+        clf = Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42))
+        ])
     elif model_type == 'Ensemble (Voting)':
-        rf  = RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1)
-        svm = SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42)
+        rf  = Pipeline([('scaler', StandardScaler()), ('clf', RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1))])
+        svm = Pipeline([('scaler', StandardScaler()), ('clf', SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42))])
         clf = VotingClassifier(estimators=[('rf', rf), ('svm', svm)], voting='soft')
     else:
         raise ValueError(f"Unknown model type: {model_type}")
@@ -191,10 +199,15 @@ def confusion_matrix_fig(cm: np.ndarray, class_names: list) -> go.Figure:
 
 
 def feature_importance_fig(model, feat_names: list, top_n: int = 20) -> go.Figure:
-    if hasattr(model, 'feature_importances_'):
-        imps = model.feature_importances_
-    elif hasattr(model, 'coef_'):
-        imps = np.abs(model.coef_[0]) if model.coef_.ndim > 1 else np.abs(model.coef_)
+    # Unwrap sklearn Pipeline to get the actual classifier
+    inner = model
+    if hasattr(inner, 'named_steps') and 'clf' in inner.named_steps:
+        inner = inner.named_steps['clf']
+    
+    if hasattr(inner, 'feature_importances_'):
+        imps = inner.feature_importances_
+    elif hasattr(inner, 'coef_'):
+        imps = np.abs(inner.coef_[0]) if inner.coef_.ndim > 1 else np.abs(inner.coef_)
     else:
         fig = go.Figure()
         fig.add_annotation(text="Feature importances not available for this model (e.g., non-linear SVM)",
