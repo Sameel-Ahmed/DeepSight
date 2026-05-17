@@ -1267,18 +1267,23 @@ elif page == "7 · Live Demo":
             md              = load_model(model_path)
             lbl, conf, top3 = predict_image(cropped, md)
 
+            # Confidence threshold: warn user if model is unsure
+            if conf < 40:
+                st.warning(f"⚠️ **Low Confidence ({conf}%)** — The model is not confident this is a recognizable fish species. "
+                           f"This may not be an underwater/fish image, or the species is not in the training set.")
+            
             st.markdown(f"""
             <div class="card">
                 <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
                     <div>
                         <div style="color:#5EEAD4;font-size:0.73rem;
                                     text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
-                        <div style="color:#10B981;font-size:1.6rem;font-weight:700;">{lbl}</div>
+                        <div style="color:{'#10B981' if conf >= 40 else '#EF4444'};font-size:1.6rem;font-weight:700;">{lbl}</div>
                     </div>
                     <div>
                         <div style="color:#5EEAD4;font-size:0.73rem;
                                     text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
-                        <div style="color:#2DD4BF;font-size:1.6rem;font-weight:700;
+                        <div style="color:{'#2DD4BF' if conf >= 40 else '#EF4444'};font-size:1.6rem;font-weight:700;
                                     font-family:'JetBrains Mono',monospace;">{conf}%</div>
                     </div>
                 </div>
