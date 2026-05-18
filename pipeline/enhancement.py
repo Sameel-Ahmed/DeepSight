@@ -11,7 +11,6 @@ from skimage.metrics import structural_similarity as _ssim
 
 # ── All available stage keys (ordered) ───────────────────────────────────────
 STAGE_KEYS = [
-    'denoise',
     'red_compensation',
     'white_balance',
     'gamma',
@@ -22,11 +21,6 @@ STAGE_KEYS = [
 
 # ── Stage metadata for UI rendering ──────────────────────────────────────────
 STAGE_META = {
-    'denoise': {
-        'label': 'Stage 0 · Bilateral Denoising',
-        'desc':  'Edge-aware noise reduction using a Bilateral Filter. Removes marine snow and particle noise while preserving fish edge detail, boosting SSIM.',
-        'icon':  '🌊',
-    },
     'red_compensation': {
         'label': 'Stage 1 · Red Channel Compensation',
         'desc':  'Corrects the red/orange colour cast caused by underwater light attenuation by boosting the red channel proportionally to the deficit.',
@@ -113,10 +107,6 @@ def unsharp_mask(img: np.ndarray, kernel_size: tuple = (5, 5), sigma: float = 1.
     return np.clip(sharpened, 0, 255).astype(np.uint8)
 
 
-def bilateral_denoise(img: np.ndarray, d: int = 9, sigma_color: float = 75, sigma_space: float = 75) -> np.ndarray:
-    """Stage 6: Edge-aware noise reduction using Bilateral Filter."""
-    return cv2.bilateralFilter(img, d, sigma_color, sigma_space)
-
 
 def histogram_stretch(img: np.ndarray) -> np.ndarray:
     """Stage 7: Per-channel min-max histogram stretching to full 0-255 range."""
@@ -133,7 +123,6 @@ def histogram_stretch(img: np.ndarray) -> np.ndarray:
 
 # ── Map key -> function ───────────────────────────────────────────────────────
 _STAGE_FN = {
-    'denoise':           bilateral_denoise,
     'red_compensation':  red_channel_compensation,
     'white_balance':     white_balance,
     'gamma':             gamma_correction,
