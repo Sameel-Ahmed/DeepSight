@@ -918,7 +918,7 @@ elif page == "6 · Model Training":
 
     c_m1, c_m2, c_m3 = st.columns(3)
     with c_m1:
-        model_type = st.selectbox("Model Type", ["Random Forest", "SVM", "Ensemble (Voting)"])
+        model_type = st.selectbox("Model Type", ["Random Forest", "SVM", "Ensemble (Voting)", "Ensemble (RF+SVM+GBM)"])
     with c_m2:
         if "Random Forest" in model_type or "Ensemble" in model_type:
             n_estimators = st.slider("Number of Trees", 10, 200, 100, 10)
@@ -957,10 +957,18 @@ elif page == "6 · Model Training":
                               n_estimators=n_estimators, max_depth=max_depth,
                               svm_c=svm_c, svm_kernel=svm_kernel, progress_cb=cb)
             
-        save_model(res, model_path)
+        # Route GBM ensemble to a separate file so model.pkl is never overwritten
+        if model_type == 'Ensemble (RF+SVM+GBM)':
+            save_path = os.path.join(os.path.dirname(__file__), 'model_boosted.pkl')
+            save_label = 'model_boosted.pkl'
+        else:
+            save_path = model_path
+            save_label = 'model.pkl'
+
+        save_model(res, save_path)
         st.session_state['model_results'] = res
         mark_done('training')
-        info.markdown('<span style="color:#10B981;">✅ Model saved to model.pkl</span>',
+        info.markdown(f'<span style="color:#10B981;">✅ Model saved to {save_label}</span>',
                       unsafe_allow_html=True)
                       
     if os.path.exists(model_path):
@@ -1010,7 +1018,21 @@ elif page == "6 · Model Training":
 elif page == "7 · Live Demo":
     step_header("7", "🎯", "Live Demo")
 
-    model_path  = os.path.join(os.path.dirname(__file__), 'model.pkl')
+    model_path         = os.path.join(os.path.dirname(__file__), 'model.pkl')
+    model_boosted_path = os.path.join(os.path.dirname(__file__), 'model_boosted.pkl')
+    model_ready        = os.path.exists(model_path)
+    boosted_ready      = os.path.exists(model_boosted_path)
+
+    # ── Model selector ────────────────────────────────────────────────────────
+    model_options = ["🤖 Standard (RF + SVM)"]
+    if boosted_ready:
+        model_options.append("🚀 Boosted (RF + SVM + GBM)")
+    selected_model_label = st.radio(
+        "Select Model for Classification:",
+        model_options,
+        horizontal=True
+    )
+    model_path = model_boosted_path if "Boosted" in selected_model_label else model_path
     model_ready = os.path.exists(model_path)
 
     if not model_ready:

@@ -5,7 +5,8 @@ import numpy as np
 import joblib
 import plotly.graph_objects as go
 import plotly.figure_factory as ff
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.ensemble import (RandomForestClassifier, VotingClassifier,
+                               HistGradientBoostingClassifier)
 from sklearn.svm import SVC
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -50,6 +51,12 @@ def train_model(X: np.ndarray, y: np.ndarray,
         rf  = Pipeline([('scaler', StandardScaler()), ('clf', RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1))])
         svm = Pipeline([('scaler', StandardScaler()), ('clf', SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42))])
         clf = VotingClassifier(estimators=[('rf', rf), ('svm', svm)], voting='soft')
+    elif model_type == 'Ensemble (RF+SVM+GBM)':
+        # Boosted Ensemble: RF + SVM + Gradient Boosting (saves to model_boosted.pkl)
+        rf  = Pipeline([('scaler', StandardScaler()), ('clf', RandomForestClassifier(n_estimators=n_estimators, max_depth=max_depth, random_state=42, n_jobs=-1))])
+        svm = Pipeline([('scaler', StandardScaler()), ('clf', SVC(C=svm_c, kernel=svm_kernel, probability=True, random_state=42))])
+        gbm = Pipeline([('scaler', StandardScaler()), ('clf', HistGradientBoostingClassifier(max_iter=150, random_state=42))])
+        clf = VotingClassifier(estimators=[('rf', rf), ('svm', svm), ('gbm', gbm)], voting='soft')
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
