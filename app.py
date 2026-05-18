@@ -766,7 +766,7 @@ elif page == "4 · Enhancement":
 
 
 # ─── UIEB BENCHMARK ───────────────────────────────────────────────────────────
-elif page == "UIEB Benchmark":
+elif page == "UIEB Benchmark (Optional)":
     step_header("Benchmark", "🏆", "UIEB Enhancement Benchmark")
 
     if 'dataset' not in st.session_state:
