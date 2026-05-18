@@ -1257,12 +1257,20 @@ elif page == "7 · Live Demo":
                     yolo_model = YOLO(yolo_path)
                 res_yolo = yolo_model(det_enhanced)
                 boxes    = res_yolo[0].boxes
-                names    = yolo_model.names
+                names    = yolo_model.names  # kept for reference only — not shown in UI
 
-                # Show full YOLO annotated image
-                res_plotted = res_yolo[0].plot()
-                st.image(bgr_to_rgb(res_plotted),
-                         caption="YOLO11 — Detected Objects",
+                # Draw clean bounding boxes using OpenCV (no YOLO class labels)
+                # YOLO11n is trained on COCO (no fish class) so its labels are unreliable.
+                # We use YOLO purely for bounding box localization.
+                bbox_display = det_enhanced.copy()
+                if boxes is not None and len(boxes):
+                    for box in boxes:
+                        bx1, by1, bx2, by2 = [int(v) for v in box.xyxy[0].cpu().numpy()]
+                        cv2.rectangle(bbox_display, (bx1, by1), (bx2, by2), (0, 255, 180), 2)
+                        cv2.putText(bbox_display, "Object", (bx1, by1 - 8),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 2)
+                st.image(bgr_to_rgb(bbox_display),
+                         caption="YOLO11 — Localized Objects (classified by ML model below)",
                          use_container_width=True)
 
                 if boxes is not None and len(boxes):
@@ -1280,8 +1288,6 @@ elif page == "7 · Live Demo":
                         x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].cpu().numpy()]
                         x1, y1 = max(0, x1), max(0, y1)
                         x2, y2 = min(W, x2), min(H, y2)
-                        yolo_label = names[int(box.cls[0])]
-                        yolo_conf  = round(float(box.conf[0]) * 100, 1)
                         crop = det_enhanced[y1:y2, x1:x2]
                         if crop.size == 0:
                             continue
@@ -1292,7 +1298,7 @@ elif page == "7 · Live Demo":
                             st.markdown(f"""
                             <div class="card" style="padding:0.8rem;">
                                 <div style="color:#5EEAD4;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.3rem;">
-                                    YOLO: {yolo_label} ({yolo_conf}%)</div>
+                                    DeepSight ML Classification</div>
                                 <div style="color:{clr};font-size:1.2rem;font-weight:700;">{lbl}</div>
                                 <div style="color:{clr};font-family:'JetBrains Mono',monospace;font-size:1rem;">{conf}%</div>
                             </div>""", unsafe_allow_html=True)
