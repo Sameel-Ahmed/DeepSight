@@ -1301,6 +1301,32 @@ elif page == "7 · Live Demo":
 
             lbl, conf, top3 = predict_image(crop, md)
 
+            # ── No-fish gate: YOLO found nothing + model is uncertain ──────────
+            # Condition: fell back to U-2-Net (YOLO detected nothing) AND conf < 40%
+            if det_method != "YOLO11" and conf < 40:
+                st.markdown("""
+                <div style="background:linear-gradient(135deg,rgba(239,68,68,0.15),rgba(239,68,68,0.05));
+                            border:1px solid rgba(239,68,68,0.4);border-radius:12px;
+                            padding:1.2rem 1.4rem;margin:0.8rem 0;">
+                    <div style="font-size:1.3rem;font-weight:700;color:#FCA5A5;margin-bottom:0.4rem;">
+                        🐟 No Fish Detected</div>
+                    <div style="color:#FCA5A5;font-size:0.88rem;line-height:1.7;">
+                        Neither YOLO11 nor the saliency detector found a clear fish object in this image.
+                        The classifier confidence is very low (<b>""" + str(conf) + """%</b>), which means this
+                        image may not contain a recognizable fish species, or the fish is too small / obscured.
+                        <br><br>
+                        <b>Recommendation:</b> Upload a clearer underwater fish image for best results.
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+                proceed = st.checkbox(
+                    "🔍 Continue classification anyway (force result)",
+                    value=False,
+                    key=f"force_classify_{obj_i}"
+                )
+                if not proceed:
+                    st.stop()
+
             c3, c4 = st.columns(2)
             with c3:
                 st.image(bgr_to_rgb(crop), caption="Cropped Region → Classifier",
@@ -1339,6 +1365,7 @@ elif page == "7 · Live Demo":
 
             if obj_i < n_obj - 1:
                 st.markdown("---")
+
 
 
 
