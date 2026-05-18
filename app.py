@@ -1255,24 +1255,50 @@ elif page == "7 · Live Demo":
                 yolo_path = 'yolo_custom.pt' if os.path.exists(os.path.join(os.path.dirname(__file__), 'yolo_custom.pt')) else 'yolo11n.pt'
                 with st.spinner(f"Loading {yolo_path} AI model..."):
                     yolo_model = YOLO(yolo_path)
-                res_yolo   = yolo_model(det_enhanced)
+                res_yolo = yolo_model(det_enhanced)
+                boxes    = res_yolo[0].boxes
+                names    = yolo_model.names
+
+                # Show full YOLO annotated image
                 res_plotted = res_yolo[0].plot()
                 st.image(bgr_to_rgb(res_plotted),
-                         caption="YOLO11 — General Object Detection",
+                         caption="YOLO11 — Detected Objects",
                          use_container_width=True)
-                # Show detected labels
-                names  = yolo_model.names
-                boxes  = res_yolo[0].boxes
+
                 if boxes is not None and len(boxes):
-                    detected = [names[int(c)] for c in boxes.cls.cpu().numpy()]
-                    unique   = list(dict.fromkeys(detected))
-                    tags_html = " ".join(
-                        f'<span class="badge badge-uieb">{d}</span>' for d in unique)
-                    st.markdown(f'<div style="margin-top:0.6rem;">'
-                                f'Detected: {tags_html}</div>',
+                    st.markdown("---")
+                    st.markdown("<div style='color:#2DD4BF;font-weight:700;font-size:1.05rem;"
+                                "margin-bottom:0.6rem;'>🔬 Per-Object Classification (YOLO crop → ML Model)</div>",
                                 unsafe_allow_html=True)
-                st.info("💡 YOLO11 detects 80 general object classes. Drop in a custom "
-                        "`best.pt` to detect underwater species specifically!")
+                    md = load_model(model_path)
+                    H, W = det_enhanced.shape[:2]
+                    num_boxes = min(len(boxes), 3)
+                    obj_cols = st.columns(num_boxes)
+                    for i, box in enumerate(boxes):
+                        if i >= 3:
+                            break
+                        x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].cpu().numpy()]
+                        x1, y1 = max(0, x1), max(0, y1)
+                        x2, y2 = min(W, x2), min(H, y2)
+                        yolo_label = names[int(box.cls[0])]
+                        yolo_conf  = round(float(box.conf[0]) * 100, 1)
+                        crop = det_enhanced[y1:y2, x1:x2]
+                        if crop.size == 0:
+                            continue
+                        lbl, conf, _ = predict_image(crop, md)
+                        clr = '#10B981' if conf >= 40 else '#EF4444'
+                        with obj_cols[i]:
+                            st.image(bgr_to_rgb(crop), use_container_width=True)
+                            st.markdown(f"""
+                            <div class="card" style="padding:0.8rem;">
+                                <div style="color:#5EEAD4;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.3rem;">
+                                    YOLO: {yolo_label} ({yolo_conf}%)</div>
+                                <div style="color:{clr};font-size:1.2rem;font-weight:700;">{lbl}</div>
+                                <div style="color:{clr};font-family:'JetBrains Mono',monospace;font-size:1rem;">{conf}%</div>
+                            </div>""", unsafe_allow_html=True)
+                else:
+                    st.info("ℹ️ YOLO found no objects in this image. Try the U-2-Net tab instead.")
+
             except Exception as e:
                 st.error(f"YOLO error: {e}")
 
