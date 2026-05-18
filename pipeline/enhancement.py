@@ -11,6 +11,7 @@ from skimage.metrics import structural_similarity as _ssim
 
 # ── All available stage keys (ordered) ───────────────────────────────────────
 STAGE_KEYS = [
+    'denoise',
     'red_compensation',
     'white_balance',
     'gamma',
@@ -21,9 +22,14 @@ STAGE_KEYS = [
 
 # ── Stage metadata for UI rendering ──────────────────────────────────────────
 STAGE_META = {
+    'denoise': {
+        'label': 'Stage 0 · Bilateral Denoising',
+        'desc':  'Edge-aware noise reduction using a Bilateral Filter. Removes marine snow and particle noise while preserving fish edge detail, boosting SSIM.',
+        'icon':  '🌊',
+    },
     'red_compensation': {
         'label': 'Stage 1 · Red Channel Compensation',
-        'desc':  'Corrects the red/orange colour cast caused by underwater light attenuation by boosting the red channel toward the green channel mean.',
+        'desc':  'Corrects the red/orange colour cast caused by underwater light attenuation by boosting the red channel proportionally to the deficit.',
         'icon':  '🔴',
     },
     'white_balance': {
@@ -56,13 +62,16 @@ STAGE_META = {
 
 # ── Core Stage Functions ──────────────────────────────────────────────────────
 
-def red_channel_compensation(img: np.ndarray, alpha: float = 1.0) -> np.ndarray:
-    """Stage 1: Compensates the red channel using the green channel."""
+def red_channel_compensation(img: np.ndarray) -> np.ndarray:
+    """Stage 1: Proportional red channel compensation based on actual deficit."""
     img_float = img.astype(np.float32)
     b, g, r = cv2.split(img_float)
     mean_g, mean_r = np.mean(g), np.mean(r)
     if mean_r < mean_g:
-        r = r + alpha * (mean_g - mean_r) * (1 - r / 255.0)
+        # Scale alpha proportionally to deficit — small deficit = gentle boost
+        deficit = mean_g - mean_r
+        alpha = np.clip(deficit / 60.0, 0.3, 1.0)  # 0.3 min to avoid no-op; 1.0 max
+        r = r + alpha * deficit * (1 - r / 255.0)
     r = np.clip(r, 0, 255)
     return cv2.merge((b, g, r)).astype(np.uint8)
 
@@ -78,8 +87,11 @@ def white_balance(img: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 
-def gamma_correction(img: np.ndarray, gamma: float = 1.2) -> np.ndarray:
-    """Stage 3: Adjusts brightness via power-law transform."""
+def gamma_correction(img: np.ndarray) -> np.ndarray:
+    """Stage 3: Adaptive gamma — computed per-image from mean brightness."""
+    mean_brightness = np.mean(img) / 255.0
+    # Dark image → stronger correction (γ=1.5); bright image → gentle (γ=1.05)
+    gamma = np.clip(1.0 / (mean_brightness + 0.15), 1.05, 1.5)
     inv_gamma = 1.0 / gamma
     table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype(np.uint8)
     return cv2.LUT(img, table)
@@ -94,8 +106,8 @@ def apply_clahe(img: np.ndarray, clip_limit: float = 2.0, tile_grid: tuple = (8,
     return cv2.cvtColor(cv2.merge((l_eq, a, b)), cv2.COLOR_LAB2BGR)
 
 
-def unsharp_mask(img: np.ndarray, kernel_size: tuple = (5, 5), sigma: float = 1.0, amount: float = 1.5) -> np.ndarray:
-    """Stage 5: Enhances fine textures via unsharp masking."""
+def unsharp_mask(img: np.ndarray, kernel_size: tuple = (5, 5), sigma: float = 1.0, amount: float = 0.8) -> np.ndarray:
+    """Stage 5: Enhances fine textures via unsharp masking (gentler amount to reduce noise amplification)."""
     blurred = cv2.GaussianBlur(img, kernel_size, sigma)
     sharpened = float(amount + 1) * img.astype(np.float32) - float(amount) * blurred.astype(np.float32)
     return np.clip(sharpened, 0, 255).astype(np.uint8)
@@ -121,6 +133,7 @@ def histogram_stretch(img: np.ndarray) -> np.ndarray:
 
 # ── Map key -> function ───────────────────────────────────────────────────────
 _STAGE_FN = {
+    'denoise':           bilateral_denoise,
     'red_compensation':  red_channel_compensation,
     'white_balance':     white_balance,
     'gamma':             gamma_correction,

@@ -630,7 +630,7 @@ elif page == "4 · Enhancement":
     for i, key in enumerate(STAGE_KEYS):
         meta = STAGE_META[key]
         with cols_cb[i % 2]:
-            # Histogram stretching is OFF by default — can distort colour balance
+            # Histogram stretching OFF by default; all others ON
             default_on = key != 'histogram_stretch'
             checked = st.checkbox(
                 f"{meta['icon']}  {meta['label']}",
@@ -1073,7 +1073,7 @@ elif page == "7 · Live Demo":
         for i, key in enumerate(STAGE_KEYS):
             meta = STAGE_META[key]
             with cb_cols[i % 2]:
-                # Histogram stretching is OFF by default
+                # Histogram stretching OFF by default; all others ON
                 default_on = key != 'histogram_stretch'
                 if st.checkbox(
                     f"{meta['icon']}  {meta['label']}",
