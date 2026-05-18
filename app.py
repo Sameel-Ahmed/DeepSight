@@ -1228,134 +1228,111 @@ elif page == "7 · Live Demo":
             st.info("Detection tab works on a single image. Please upload one image.")
             st.stop()
 
-        # Use the same active stages from the Enhancement tab for consistency
+        # Enhance image using active stages from the Enhancement tab
         try:
             det_enhanced = enhance_image(raw_r, demo_active_stages) if force_enhance else raw_r.copy()
         except Exception:
             det_enhanced = raw_r.copy()
 
-        st.markdown("""
+        # ── Unified Detection: YOLO first → U-2-Net fallback ──────────────────
+        det_method = "U-2-Net / Classical CV"
+        cropped    = None
+        bbox_img   = det_enhanced.copy()
+
+        # Tier 1: Try YOLO11 for fast object localization
+        try:
+            yolo_path  = 'yolo_custom.pt' if os.path.exists(
+                os.path.join(os.path.dirname(__file__), 'yolo_custom.pt')) else 'yolo11n.pt'
+            yolo_model = YOLO(yolo_path)
+            res_yolo   = yolo_model(det_enhanced, verbose=False)
+            boxes      = res_yolo[0].boxes
+            H, W       = det_enhanced.shape[:2]
+
+            if boxes is not None and len(boxes):
+                # Pick the highest-confidence YOLO box
+                confs    = boxes.conf.cpu().numpy()
+                best_idx = int(confs.argmax())
+                x1, y1, x2, y2 = [int(v) for v in boxes.xyxy[best_idx].cpu().numpy()]
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(W, x2), min(H, y2)
+                crop_candidate = det_enhanced[y1:y2, x1:x2]
+
+                if crop_candidate.size > 0:
+                    cropped    = crop_candidate
+                    det_method = "YOLO11"
+                    # Draw clean green box on display image
+                    bbox_img = det_enhanced.copy()
+                    cv2.rectangle(bbox_img, (x1, y1), (x2, y2), (0, 255, 180), 2)
+                    cv2.putText(bbox_img, "Fish Detected", (x1, max(y1 - 8, 12)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 180), 2)
+        except Exception:
+            pass  # YOLO unavailable — fall through to U-2-Net
+
+        # Tier 2: U-2-Net / Classical CV / Center Crop fallback
+        if cropped is None:
+            bbox_coords, cropped = detect_salient_object(det_enhanced)
+            bbox_img = draw_bounding_box(det_enhanced, bbox_coords)
+
+        # ── Display ────────────────────────────────────────────────────────────
+        c3, c4 = st.columns(2)
+        with c3:
+            st.image(bgr_to_rgb(bbox_img),
+                     caption=f"Object Detection ({det_method})",
+                     use_container_width=True)
+        with c4:
+            st.image(bgr_to_rgb(cropped),
+                     caption="Cropped Region → Classifier",
+                     use_container_width=True)
+
+        # Detection method badge
+        badge_color = "#0F766E" if det_method == "YOLO11" else "#1E40AF"
+        badge_icon  = "🤖" if det_method == "YOLO11" else "🔬"
+        st.markdown(
+            f'<div style="margin-bottom:0.8rem;">'
+            f'<span style="background:{badge_color};color:#F0FDFA;padding:0.2rem 0.7rem;'
+            f'border-radius:12px;font-size:0.75rem;font-weight:600;">'
+            f'{badge_icon} Detected via {det_method}</span></div>',
+            unsafe_allow_html=True)
+
+        # ── ML Classification ──────────────────────────────────────────────────
+        md              = load_model(model_path)
+        lbl, conf, top3 = predict_image(cropped, md)
+
+        if conf < 40:
+            st.warning(f"⚠️ **Low Confidence ({conf}%)** — The model is not confident this is a "
+                       f"recognizable fish species. This may not be an underwater/fish image, "
+                       f"or the species is not in the training set.")
+
+        st.markdown(f"""
         <div class="card">
-            <div class="card-title">🔍 Detection Mode</div>
-            <div style="color:#5EEAD4;font-size:0.83rem;">
-                Choose between classical AI background removal or deep-learning YOLO11 detection.
+            <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
+                <div>
+                    <div style="color:#5EEAD4;font-size:0.73rem;
+                                text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
+                    <div style="color:{'#10B981' if conf >= 40 else '#EF4444'};font-size:1.6rem;font-weight:700;">{lbl}</div>
+                </div>
+                <div>
+                    <div style="color:#5EEAD4;font-size:0.73rem;
+                                text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
+                    <div style="color:{'#2DD4BF' if conf >= 40 else '#EF4444'};font-size:1.6rem;font-weight:700;
+                                font-family:'JetBrains Mono',monospace;">{conf}%</div>
+                </div>
             </div>
         </div>""", unsafe_allow_html=True)
 
-        det_mode = st.radio(
-            "Detection Mode",
-            ["🐟  Classical Saliency (U-2-Net Fish Masking)",
-             "🤖  Deep Learning (YOLO11 Multi-Object)"],
-            horizontal=True,
-            label_visibility="collapsed"
-        )
-
-        if "YOLO11" in det_mode:
-            try:
-                yolo_path = 'yolo_custom.pt' if os.path.exists(os.path.join(os.path.dirname(__file__), 'yolo_custom.pt')) else 'yolo11n.pt'
-                with st.spinner(f"Loading {yolo_path} AI model..."):
-                    yolo_model = YOLO(yolo_path)
-                res_yolo = yolo_model(det_enhanced)
-                boxes    = res_yolo[0].boxes
-                names    = yolo_model.names  # kept for reference only — not shown in UI
-
-                # Draw clean bounding boxes using OpenCV (no YOLO class labels)
-                # YOLO11n is trained on COCO (no fish class) so its labels are unreliable.
-                # We use YOLO purely for bounding box localization.
-                bbox_display = det_enhanced.copy()
-                if boxes is not None and len(boxes):
-                    for box in boxes:
-                        bx1, by1, bx2, by2 = [int(v) for v in box.xyxy[0].cpu().numpy()]
-                        cv2.rectangle(bbox_display, (bx1, by1), (bx2, by2), (0, 255, 180), 2)
-                        cv2.putText(bbox_display, "Object", (bx1, by1 - 8),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 2)
-                st.image(bgr_to_rgb(bbox_display),
-                         caption="YOLO11 — Localized Objects (classified by ML model below)",
-                         use_container_width=True)
-
-                if boxes is not None and len(boxes):
-                    st.markdown("---")
-                    st.markdown("<div style='color:#2DD4BF;font-weight:700;font-size:1.05rem;"
-                                "margin-bottom:0.6rem;'>🔬 Per-Object Classification (YOLO crop → ML Model)</div>",
-                                unsafe_allow_html=True)
-                    md = load_model(model_path)
-                    H, W = det_enhanced.shape[:2]
-                    num_boxes = min(len(boxes), 3)
-                    obj_cols = st.columns(num_boxes)
-                    for i, box in enumerate(boxes):
-                        if i >= 3:
-                            break
-                        x1, y1, x2, y2 = [int(v) for v in box.xyxy[0].cpu().numpy()]
-                        x1, y1 = max(0, x1), max(0, y1)
-                        x2, y2 = min(W, x2), min(H, y2)
-                        crop = det_enhanced[y1:y2, x1:x2]
-                        if crop.size == 0:
-                            continue
-                        lbl, conf, _ = predict_image(crop, md)
-                        clr = '#10B981' if conf >= 40 else '#EF4444'
-                        with obj_cols[i]:
-                            st.image(bgr_to_rgb(crop), use_container_width=True)
-                            st.markdown(f"""
-                            <div class="card" style="padding:0.8rem;">
-                                <div style="color:#5EEAD4;font-size:0.7rem;text-transform:uppercase;margin-bottom:0.3rem;">
-                                    DeepSight ML Classification</div>
-                                <div style="color:{clr};font-size:1.2rem;font-weight:700;">{lbl}</div>
-                                <div style="color:{clr};font-family:'JetBrains Mono',monospace;font-size:1rem;">{conf}%</div>
-                            </div>""", unsafe_allow_html=True)
-                else:
-                    st.info("ℹ️ YOLO found no objects in this image. Try the U-2-Net tab instead.")
-
-            except Exception as e:
-                st.error(f"YOLO error: {e}")
-
-        else:
-            bbox, cropped = detect_salient_object(det_enhanced)
-            bbox_img      = draw_bounding_box(det_enhanced, bbox)
-
-            c3, c4 = st.columns(2)
-            with c3:
-                st.image(bgr_to_rgb(bbox_img),
-                         caption="Salient Object Detection (U-2-Net)",
-                         use_container_width=True)
-            with c4:
-                st.image(bgr_to_rgb(cropped),
-                         caption="Cropped Region → Classifier",
-                         use_container_width=True)
-
-            md              = load_model(model_path)
-            lbl, conf, top3 = predict_image(cropped, md)
-
-            # Confidence threshold: warn user if model is unsure
-            if conf < 40:
-                st.warning(f"⚠️ **Low Confidence ({conf}%)** — The model is not confident this is a recognizable fish species. "
-                           f"This may not be an underwater/fish image, or the species is not in the training set.")
-            
+        st.markdown("**Top 3 Predictions**")
+        for pl, pp in top3:
             st.markdown(f"""
-            <div class="card">
-                <div style="display:flex;gap:2rem;align-items:center;flex-wrap:wrap;">
-                    <div>
-                        <div style="color:#5EEAD4;font-size:0.73rem;
-                                    text-transform:uppercase;letter-spacing:0.08em;">Predicted</div>
-                        <div style="color:{'#10B981' if conf >= 40 else '#EF4444'};font-size:1.6rem;font-weight:700;">{lbl}</div>
-                    </div>
-                    <div>
-                        <div style="color:#5EEAD4;font-size:0.73rem;
-                                    text-transform:uppercase;letter-spacing:0.08em;">Confidence</div>
-                        <div style="color:{'#2DD4BF' if conf >= 40 else '#EF4444'};font-size:1.6rem;font-weight:700;
-                                    font-family:'JetBrains Mono',monospace;">{conf}%</div>
-                    </div>
+            <div class="pred-bar-wrap">
+                <div class="pred-label">{pl}</div>
+                <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:8px;">
+                    <div class="pred-bar" style="width:{int(pp)}%;"></div>
                 </div>
+                <div class="pred-pct">{pp}%</div>
             </div>""", unsafe_allow_html=True)
 
-            st.markdown("**Top 3 Predictions**")
-            for pl, pp in top3:
-                st.markdown(f"""
-                <div class="pred-bar-wrap">
-                    <div class="pred-label">{pl}</div>
-                    <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:8px;">
-                        <div class="pred-bar" style="width:{int(pp)}%;"></div>
-                    </div>
-                    <div class="pred-pct">{pp}%</div>
-                </div>""", unsafe_allow_html=True)
+
+
+
 
 
