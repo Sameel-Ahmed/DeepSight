@@ -18,11 +18,14 @@ from pipeline.eda           import (channel_analysis_fig, class_distribution_fig
                                     generate_insights)
 from pipeline.enhancement   import (enhance_image, compute_psnr, enhance_batch,
                                     enhance_image_stages, STAGE_KEYS, STAGE_META)
-from pipeline.features      import build_feature_matrix, feature_names, FEATURE_DIM
+from pipeline.features      import (build_feature_matrix, feature_names, FEATURE_DIM,
+                                    save_features, load_features)
 from pipeline.detection     import detect_salient_object, draw_bounding_box
-from pipeline.model         import (train_model, save_model, load_model, predict_image,
+from pipeline.model         import (train_model, train_all_models, ALL_MODEL_TYPES,
+                                    save_model, load_model, predict_image,
                                     confusion_matrix_fig, feature_importance_fig,
-                                    per_class_metrics_fig, evaluate_model)
+                                    per_class_metrics_fig, model_comparison_fig,
+                                    evaluate_model, save_results, load_results)
 from ultralytics            import YOLO
 from pipeline.benchmark     import run_uieb_benchmark
 
@@ -855,9 +858,56 @@ elif page == "5 · Feature Extraction":
     else:
         st.info("🤖 No GT masks found. Using U-2-Net AI for background removal on the fly (this is slower).")
 
+    feat_cache_path = os.path.join(os.path.dirname(__file__), 'data', 'features.npz')
+    cached_feat = load_features(feat_cache_path)
+
+    if cached_feat is not None:
+        cached_ds_path = cached_feat['dataset_path']
+        current_ds_path = ds.get('root', '')
+        path_match = os.path.normpath(cached_ds_path) == os.path.normpath(current_ds_path)
+
+        col_a, col_b = st.columns([3, 1])
+        with col_a:
+            mod_time = os.path.getmtime(feat_cache_path)
+            import datetime as _dt
+            mod_str = _dt.datetime.fromtimestamp(mod_time).strftime('%Y-%m-%d %H:%M')
+            st.markdown(f"""
+            <div class="card" style="border-color:rgba(45,212,191,0.4);">
+                <div class="card-title" style="color:#2DD4BF;">💾 Saved Feature Cache Found</div>
+                <div style="color:#5EEAD4;font-size:0.85rem;line-height:1.9;">
+                    <b>Shape:</b> {cached_feat['X'].shape[0]} images &times; {cached_feat['X'].shape[1]} features
+                    &nbsp;|&nbsp; <b>Classes:</b> {len(cached_feat['class_names'])}
+                    &nbsp;|&nbsp; <b>Saved:</b> {mod_str}<br>
+                    <b>Dataset:</b> <code style="color:#FACC15;">{cached_ds_path}</code>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+        if not path_match:
+            st.warning(
+                f"⚠️ **Dataset mismatch!** The cache was built from:\n\n"
+                f"`{cached_ds_path}`\n\nbut the currently loaded dataset is:\n\n"
+                f"`{current_ds_path}`\n\n"
+                "Loading the cache may give incorrect results. Use **Re-Extract Fresh** to rebuild."
+            )
+
+        lc1, lc2 = st.columns(2)
+        with lc1:
+            if st.button("📂 Load Saved Features", type="primary", key="btn_load_feat"):
+                st.session_state['X']               = cached_feat['X']
+                st.session_state['y']               = cached_feat['y']
+                st.session_state['feat_class_names'] = cached_feat['class_names']
+                mark_done('features')
+                st.success(f"✅ Loaded {cached_feat['X'].shape[0]} samples from cache instantly!")
+                st.rerun()
+        with lc2:
+            st.button("🔄 Re-Extract Fresh", key="btn_reextract",
+                      help="Ignore the cache and re-run the full extraction pipeline.")
+
+        st.markdown("---")
+
     max_n = st.slider("Max images to process", 1, ds['total'], min(2000, ds['total']))
 
-    if st.button("🧬 Extract Features"):
+    if st.button("🧬 Extract Features", key="btn_extract"):
         bar  = st.progress(0)
         info = st.empty()
 
@@ -872,7 +922,11 @@ elif page == "5 · Feature Extraction":
         st.session_state['y'] = y
         st.session_state['feat_class_names'] = ds['class_names']
         mark_done('features')
-        info.markdown('<span style="color:#10B981;">✅ Done!</span>', unsafe_allow_html=True)
+
+        # Auto-save to disk
+        save_features(X, y, ds['class_names'], ds.get('root', ''), feat_cache_path)
+        info.markdown('<span style="color:#10B981;">✅ Done! Features saved to data/features.npz</span>',
+                      unsafe_allow_html=True)
 
     if 'X' in st.session_state:
         X = st.session_state['X']
@@ -904,97 +958,317 @@ elif page == "6 · Model Training":
 
     X           = st.session_state['X']
     y           = st.session_state['y']
-    # Fallback: derive class_names from dataset if autopilot stored them differently
     class_names = st.session_state.get('feat_class_names',
                   st.session_state.get('dataset', {}).get('class_names', []))
-    model_path  = os.path.join(os.path.dirname(__file__), 'model.pkl')
+    model_path       = os.path.join(os.path.dirname(__file__), 'model.pkl')
+    results_cache_path = os.path.join(os.path.dirname(__file__), 'data', 'model_results.pkl')
 
-    st.markdown("""<div class="card">
-        <div class="card-title">Model Hyperparameters</div>
-        <div style="color:#5EEAD4;font-size:0.86rem;line-height:1.9;">
-            Configure the classifier before training.
+    # ── Load Previous Results Banner ──────────────────────────────────────────────
+    if 'cmp_comparison' not in st.session_state:
+        cached_res = load_results(results_cache_path)
+        if cached_res is not None:
+            saved_at   = cached_res.get('saved_at', 'Unknown')
+            slim       = cached_res.get('slim_results', [])
+            best_label = next((r['type'] for r in slim if r.get('type','').startswith('🏆')),
+                              slim[-1]['type'] if slim else 'N/A')
+            rc1, rc2 = st.columns([3, 1])
+            with rc1:
+                st.markdown(f"""
+                <div class="card" style="border-color:rgba(45,212,191,0.4);">
+                    <div class="card-title" style="color:#2DD4BF;">📈 Previous Training Results Found</div>
+                    <div style="color:#5EEAD4;font-size:0.85rem;line-height:1.9;">
+                        <b>Trained:</b> {saved_at} &nbsp;|&nbsp;
+                        <b>Models:</b> {len(slim)} &nbsp;|&nbsp;
+                        <b>Saved As:</b> <code style="color:#FACC15;">{best_label}</code>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+            with rc2:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("📂 Load Previous Results", type="primary", key="btn_load_results"):
+                    # Restore slim results into session state
+                    # (no model objects — feature importance won't be available for sub-models)
+                    st.session_state['cmp_comparison']  = cached_res['comparison']
+                    st.session_state['cmp_all_results'] = cached_res['slim_results']
+                    st.session_state['cmp_best']        = ({'type': best_label, 'f1': 0.0}
+                                                           if slim else None)
+                    mark_done('training')
+                    st.rerun()
+            st.markdown("---")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION A — Compare All 5 Models
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("""
+    <div class="card" style="border-color:rgba(250,204,21,0.3);">
+        <div class="card-title" style="color:#FACC15;">🏆 Compare All 5 Classifiers</div>
+        <div style="color:#5EEAD4;font-size:0.86rem;line-height:2.0;">
+            Trains <b style="color:#2DD4BF;">Random Forest · SVM · KNN · Naive Bayes · XGBoost</b>
+            on the same 80/20 split and compares them side-by-side on five metrics:
+            Accuracy, Precision, Recall, F1-Score, and AUC.
+            The best model is automatically saved as <code style="color:#FACC15;">model.pkl</code>.
         </div>
     </div>""", unsafe_allow_html=True)
 
-    c_m1, c_m2, c_m3 = st.columns(3)
-    with c_m1:
-        model_type = st.selectbox("Model Type", ["Random Forest", "SVM", "Ensemble (Voting)", "Ensemble (RF+SVM+GBM)"])
-    with c_m2:
-        if "Random Forest" in model_type or "Ensemble" in model_type:
-            n_estimators = st.slider("Number of Trees", 10, 200, 100, 10)
-        if "SVM" in model_type or "Ensemble" in model_type:
-            svm_c = st.number_input("C (Regularization)", 0.1, 100.0, 1.0)
-    with c_m3:
-        if "Random Forest" in model_type or "Ensemble" in model_type:
-            max_depth_sel = st.selectbox("Max Depth", ["None", "5", "10", "20", "50"])
-            max_depth = None if max_depth_sel == "None" else int(max_depth_sel)
-        if "SVM" in model_type or "Ensemble" in model_type:
-            svm_kernel = st.selectbox("Kernel", ["rbf", "linear", "poly", "sigmoid"])
-            
-    with st.expander("🔍 See a Raw Feature Vector (Explainability)"):
-        st.markdown("This is exactly what the model sees for **one** image after feature extraction:")
-        sample_x = X[0]
-        fig_feat = go.Figure(go.Bar(y=sample_x, x=feature_names(), marker_color='#2DD4BF'))
-        fig_feat.update_layout(title="70-Dimensional Feature Vector (Image 0)", height=300, margin=dict(t=30, b=0), **PLOTLY_BASE)
-        st.plotly_chart(fig_feat, use_container_width=True)
+    cmp_col1, cmp_col2 = st.columns([2, 1])
+    with cmp_col1:
+        cmp_n_est = st.slider("Trees (RF & XGBoost)", 50, 200, 100, 10,
+                              key="cmp_n_est")
+    with cmp_col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        run_compare = st.button("🚀 Train & Compare All 5 Models", type="primary",
+                                key="btn_compare_all")
 
-    if st.button("🚀 Train New Model"):
-        bar  = st.progress(0)
-        info = st.empty()
+    if run_compare:
+        bar_cmp  = st.progress(0)
+        info_cmp = st.empty()
+        info_cmp.info("Training all 5 models — this may take a minute...")
 
-        def cb(p):
-            bar.progress(p)
-            info.markdown(f'<span style="color:#2DD4BF;">Training {int(p*100)}%…</span>',
-                          unsafe_allow_html=True)
+        def cmp_cb(p):
+            bar_cmp.progress(p)
 
-        if model_type == "Random Forest":
-            res = train_model(X, y, class_names, model_type=model_type, n_estimators=n_estimators, max_depth=max_depth, progress_cb=cb)
-        elif model_type == "SVM":
-            res = train_model(X, y, class_names, model_type=model_type, svm_c=svm_c, svm_kernel=svm_kernel, progress_cb=cb)
-        else:
-            # Ensemble
-            res = train_model(X, y, class_names, model_type=model_type, 
-                              n_estimators=n_estimators, max_depth=max_depth,
-                              svm_c=svm_c, svm_kernel=svm_kernel, progress_cb=cb)
-            
-        # Route GBM ensemble to a separate file so model.pkl is never overwritten
-        if model_type == 'Ensemble (RF+SVM+GBM)':
-            save_path = os.path.join(os.path.dirname(__file__), 'model_boosted.pkl')
-            save_label = 'model_boosted.pkl'
-        else:
-            save_path = model_path
-            save_label = 'model.pkl'
+        comparison, all_results, best = train_all_models(
+            X, y, class_names, n_estimators=cmp_n_est, progress_cb=cmp_cb
+        )
+        st.session_state['cmp_comparison']  = comparison
+        st.session_state['cmp_all_results'] = all_results
+        st.session_state['cmp_best']        = best
 
-        save_model(res, save_path)
-        st.session_state['model_results'] = res
-        mark_done('training')
-        info.markdown(f'<span style="color:#10B981;">✅ Model saved to {save_label}</span>',
-                      unsafe_allow_html=True)
-                      
-    if os.path.exists(model_path):
+        if best:
+            # Save Super Ensemble as the default model.pkl
+            save_model(best, model_path)
+            # Save each individual model separately for Live Demo selector
+            base_dir = os.path.dirname(__file__)
+            for r in all_results:
+                if r.get('type') == best['type']:
+                    continue   # skip ensemble — already saved as model.pkl
+                safe_name = r['type'].lower().replace(' ', '_')
+                ind_path  = os.path.join(base_dir, f'model_{safe_name}.pkl')
+                try:
+                    save_model(r, ind_path)
+                except Exception:
+                    pass
+            save_results(comparison, all_results, results_cache_path)
+            st.session_state['model_results'] = best
+            mark_done('training')
+            info_cmp.success(
+                f"✅ All 5 models trained! **{best['type']}** "
+                f"(F1={best['f1']:.4f}) · saved to model.pkl & data/model_results.pkl"
+            )
+        bar_cmp.progress(1.0)
+
+
+    # ── Show comparison results ────────────────────────────────────────────────
+    if 'cmp_comparison' in st.session_state:
+        comparison  = st.session_state['cmp_comparison']
+        all_results = st.session_state['cmp_all_results']
+        best        = st.session_state['cmp_best']
+
         st.markdown("---")
+        st.markdown("""
+        <div style="color:#2DD4BF;font-weight:700;font-size:1.1rem;margin-bottom:0.8rem;">
+            📊 Performance Comparison Table
+        </div>""", unsafe_allow_html=True)
+
+        # Pre-format all numeric columns safely (handles 'ERR'/'N/A' strings too)
+        def _safe_fmt(v, decimals=2):
+            try:
+                return f'{float(v):.{decimals}f}'
+            except (ValueError, TypeError):
+                return str(v)
+
+        df_display = pd.DataFrame([{
+            'Model':         r['Model'],
+            'Accuracy (%)':  _safe_fmt(r['Accuracy (%)'],  2),
+            'Precision (%)': _safe_fmt(r['Precision (%)'], 2),
+            'Recall (%)':    _safe_fmt(r['Recall (%)'],    2),
+            'F1-Score':      _safe_fmt(r['F1-Score'],      4),
+            'AUC':           _safe_fmt(r['AUC'],           4),
+        } for r in comparison])
+
+        best_name = best['type'] if best else ''
+
+        def _highlight_best(row):
+            if row['Model'] == best_name:
+                return ['background-color: rgba(250,204,21,0.15); '
+                        'color:#FACC15; font-weight:700'] * len(row)
+            return [''] * len(row)
+
+        st.dataframe(
+            df_display.style.apply(_highlight_best, axis=1),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
+        if best:
+            st.markdown(
+                f'<div style="font-size:0.84rem;color:#5EEAD4;margin-top:0.3rem;">'
+                f'⭐ <b style="color:#FACC15;">{best_name}</b> achieved the highest '
+                f'F1-Score of <b style="color:#2DD4BF;">{best["f1"]:.4f}</b> and has been saved as model.pkl.</div>',
+                unsafe_allow_html=True
+            )
+
+        st.markdown("---")
+        st.markdown("""
+        <div style="color:#2DD4BF;font-weight:700;font-size:1.1rem;margin-bottom:0.8rem;">
+            📈 Visual Comparison
+        </div>""", unsafe_allow_html=True)
+        st.plotly_chart(model_comparison_fig(comparison), use_container_width=True)
+
+        # ── Per-model detailed breakdown (tabs) ───────────────────────────────
+        st.markdown("---")
+        st.markdown("""
+        <div style="color:#2DD4BF;font-weight:700;font-size:1.1rem;margin-bottom:0.8rem;">
+            🔍 Detailed Per-Model Breakdown
+        </div>""", unsafe_allow_html=True)
+
+        valid_results = [r for r in all_results if 'cm' in r]
+        if valid_results:
+            tab_labels = [r['type'] for r in valid_results]
+            tabs = st.tabs(tab_labels)
+            for tab, res in zip(tabs, valid_results):
+                with tab:
+                    mk = res['type'].replace(' ','_').replace('(','').replace(')','').replace('+','').replace('🏆','')
+                    auc_display = f"{res['auc']:.4f}" if isinstance(res['auc'], float) and res['auc'] == res['auc'] else 'N/A'
+                    metric_boxes([
+                        (f"{res['accuracy']:.1f}%",  "Accuracy"),
+                        (f"{res['precision']:.1f}%", "Precision"),
+                        (f"{res['recall']:.1f}%",    "Recall"),
+                        (f"{res['f1']:.4f}",          "F1-Score"),
+                        (auc_display,                 "AUC"),
+                    ])
+                    inner_t1, inner_t2, inner_t3 = st.tabs(
+                        ["🔢 Confusion Matrix", "📊 Per-Class Metrics", "🌲 Feature Importance"]
+                    )
+                    with inner_t1:
+                        st.plotly_chart(
+                            confusion_matrix_fig(res['cm'], res['class_names']),
+                            use_container_width=True,
+                            key=f"cm_{mk}"
+                        )
+                    with inner_t2:
+                        st.plotly_chart(
+                            per_class_metrics_fig(res['report'], res['class_names']),
+                            use_container_width=True,
+                            key=f"pcm_{mk}"
+                        )
+                        df_rpt = pd.DataFrame(
+                            {c: res['report'][c] for c in res['class_names']
+                             if c in res['report']}
+                        ).T
+                        st.dataframe(
+                            df_rpt[['precision', 'recall', 'f1-score', 'support']].round(3),
+                            use_container_width=True
+                        )
+                    with inner_t3:
+                        if 'model' in res and res['model'] is not None:
+                            st.plotly_chart(
+                                feature_importance_fig(res['model'], feature_names()),
+                                use_container_width=True,
+                                key=f"fi_{mk}"
+                            )
+                        else:
+                            st.info(
+                                "🗂️ **Feature importance not available from cache.**\n\n"
+                                "Model objects are not stored in the results cache to keep file size small. "
+                                "Re-train using **🚀 Train & Compare All 5 Models** to see this chart."
+                            )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION B — Train a Single Model (original functionality)
+    # ══════════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    with st.expander("⚙️ Train a Single Model (advanced / custom)", expanded=False):
         st.markdown("""<div class="card">
-            <div class="card-title">Cross-Dataset Validation</div>
+            <div class="card-title">Single Model Hyperparameters</div>
             <div style="color:#5EEAD4;font-size:0.86rem;line-height:1.9;">
-                Evaluate the previously trained model on this newly loaded dataset to test "in-the-wild" generalisation.
+                Configure and train one specific classifier with custom settings.
             </div>
         </div>""", unsafe_allow_html=True)
-        if st.button("🧪 Evaluate Existing Model (model.pkl)"):
-            with st.spinner("Evaluating existing model..."):
-                loaded = load_model(model_path)
-                # Ensure the class names align with the model's original training if possible
-                res = evaluate_model(loaded['model'], X, y, class_names)
-                st.session_state['model_results'] = res
-                mark_done('training')
-                st.success("✅ Cross-Dataset Evaluation Complete!")
 
-    if 'model_results' in st.session_state:
+        all_single_types = ["Random Forest", "SVM", "KNN", "Naive Bayes", "XGBoost",
+                            "Ensemble (Voting)", "Ensemble (RF+SVM+GBM)"]
+        c_m1, c_m2, c_m3 = st.columns(3)
+        with c_m1:
+            model_type = st.selectbox("Model Type", all_single_types, key="single_model_type")
+        with c_m2:
+            n_estimators = st.slider("Trees (RF/XGB)", 10, 200, 100, 10, key="single_n_est")
+            svm_c        = st.number_input("SVM C", 0.1, 100.0, 1.0, key="single_svm_c")
+            knn_k        = st.slider("KNN k", 1, 21, 5, 2, key="single_knn_k")
+        with c_m3:
+            max_depth_sel = st.selectbox("Max Depth (RF)", ["None", "5", "10", "20", "50"],
+                                          key="single_depth")
+            max_depth     = None if max_depth_sel == "None" else int(max_depth_sel)
+            svm_kernel    = st.selectbox("SVM Kernel", ["rbf", "linear", "poly", "sigmoid"],
+                                          key="single_kernel")
+
+        with st.expander("🔍 See a Raw Feature Vector (Explainability)"):
+            st.markdown("This is exactly what the model sees for **one** image after feature extraction:")
+            sample_x = X[0]
+            fig_feat = go.Figure(go.Bar(y=sample_x, x=feature_names(), marker_color='#2DD4BF'))
+            fig_feat.update_layout(title=f"{X.shape[1]}-Dimensional Feature Vector (Image 0)",
+                                   height=300, margin=dict(t=30, b=0), **PLOTLY_BASE)
+            st.plotly_chart(fig_feat, use_container_width=True)
+
+        if st.button("🚀 Train Single Model", key="btn_train_single"):
+            bar  = st.progress(0)
+            info = st.empty()
+
+            def cb(p):
+                bar.progress(p)
+                info.markdown(f'<span style="color:#2DD4BF;">Training {int(p*100)}%…</span>',
+                              unsafe_allow_html=True)
+
+            res = train_model(
+                X, y, class_names,
+                model_type=model_type,
+                n_estimators=n_estimators,
+                max_depth=max_depth,
+                svm_c=svm_c,
+                svm_kernel=svm_kernel,
+                knn_k=knn_k,
+                progress_cb=cb
+            )
+
+            if model_type == 'Ensemble (RF+SVM+GBM)':
+                save_path  = os.path.join(os.path.dirname(__file__), 'model_boosted.pkl')
+                save_label = 'model_boosted.pkl'
+            else:
+                save_path  = model_path
+                save_label = 'model.pkl'
+
+            save_model(res, save_path)
+            st.session_state['model_results'] = res
+            mark_done('training')
+            info.markdown(f'<span style="color:#10B981;">✅ Saved to {save_label}</span>',
+                          unsafe_allow_html=True)
+
+        if os.path.exists(model_path):
+            st.markdown("---")
+            st.markdown("""<div class="card">
+                <div class="card-title">Cross-Dataset Validation</div>
+                <div style="color:#5EEAD4;font-size:0.86rem;">
+                    Evaluate the previously saved model.pkl on the current dataset.
+                </div>
+            </div>""", unsafe_allow_html=True)
+            if st.button("🧪 Evaluate Existing model.pkl", key="btn_eval_existing"):
+                with st.spinner("Evaluating..."):
+                    loaded = load_model(model_path)
+                    res    = evaluate_model(loaded['model'], X, y, class_names)
+                    st.session_state['model_results'] = res
+                    mark_done('training')
+                    st.success("✅ Cross-Dataset Evaluation Complete!")
+
+    # ── Single-model result display ────────────────────────────────────────────
+    if 'model_results' in st.session_state and 'cmp_comparison' not in st.session_state:
         res = st.session_state['model_results']
+        auc_display = f"{res['auc']:.4f}" if isinstance(res.get('auc'), float) and res.get('auc') == res.get('auc') else 'N/A'
         metric_boxes([
-            (f"{res['accuracy']:.1f}%", "Accuracy"),
-            (f"{res['f1']:.3f}", "Weighted F1"),
-            (res['train_size'], "Train Samples"),
-            (res['test_size'],  "Test Samples"),
+            (f"{res['accuracy']:.1f}%",  "Accuracy"),
+            (f"{res.get('precision', 0):.1f}%", "Precision"),
+            (f"{res.get('recall', 0):.1f}%",    "Recall"),
+            (f"{res['f1']:.3f}",          "Weighted F1"),
+            (auc_display,                 "AUC"),
         ])
 
         t1, t2, t3 = st.tabs(
@@ -1005,9 +1279,9 @@ elif page == "6 · Model Training":
         with t2:
             st.plotly_chart(per_class_metrics_fig(res['report'], res['class_names']),
                             use_container_width=True)
-            df = pd.DataFrame({c: res['report'][c]
+            df_r = pd.DataFrame({c: res['report'][c]
                                for c in res['class_names'] if c in res['report']}).T
-            st.dataframe(df[['precision','recall','f1-score','support']].round(3),
+            st.dataframe(df_r[['precision','recall','f1-score','support']].round(3),
                          use_container_width=True)
         with t3:
             st.plotly_chart(feature_importance_fig(res['model'], feature_names()),
@@ -1019,25 +1293,53 @@ elif page == "7 · Live Demo":
     step_header("7", "🎯", "Live Demo")
 
     model_path         = os.path.join(os.path.dirname(__file__), 'model.pkl')
-    model_boosted_path = os.path.join(os.path.dirname(__file__), 'model_boosted.pkl')
-    model_ready        = os.path.exists(model_path)
-    boosted_ready      = os.path.exists(model_boosted_path)
+    base_dir           = os.path.dirname(__file__)
 
-    # ── Model selector ────────────────────────────────────────────────────────
-    model_options = ["🤖 Standard (RF + SVM)"]
-    if boosted_ready:
-        model_options.append("🚀 Boosted (RF + SVM + GBM)")
-    selected_model_label = st.radio(
-        "Select Model for Classification:",
-        model_options,
-        horizontal=True
-    )
-    model_path = model_boosted_path if "Boosted" in selected_model_label else model_path
-    model_ready = os.path.exists(model_path)
+    # ── Discover all saved model files dynamically ────────────────────────────
+    _model_registry = {
+        '🏆 Super Ensemble (all 5)':       'model.pkl',
+        '🌲 Random Forest':                'model_random_forest.pkl',
+        '📌 SVM':                          'model_svm.pkl',
+        '👥 KNN':                          'model_knn.pkl',
+        '📦 Naive Bayes':                  'model_naive_bayes.pkl',
+        '⚡ XGBoost':                      'model_xgboost.pkl',
+        '🚀 Boosted Ensemble (RF+SVM+GBM)':'model_boosted.pkl',
+    }
+    available_models = {
+        label: os.path.join(base_dir, fname)
+        for label, fname in _model_registry.items()
+        if os.path.exists(os.path.join(base_dir, fname))
+    }
+    model_ready = bool(available_models)
+
+    if not available_models:
+        st.info("ℹ️ No trained model found — Enhancement tab fully works. "
+                "Complete Step 6 to unlock the Detection tab.")
+        selected_model_path = model_path   # fallback
+    else:
+        st.markdown("""
+        <div class="card" style="border-color:rgba(45,212,191,0.3);padding-bottom:0.5rem;">
+            <div class="card-title" style="color:#2DD4BF;">🤖 Select Classification Model</div>
+            <div style="color:#5EEAD4;font-size:0.83rem;">
+                Choose which trained model to use for fish species prediction.
+                <b style="color:#FACC15;">Super Ensemble</b> (if available) gives the best accuracy.
+            </div>
+        </div>""", unsafe_allow_html=True)
+        selected_model_label = st.radio(
+            "Model:",
+            list(available_models.keys()),
+            horizontal=True,
+            key="live_demo_model_selector"
+        )
+        selected_model_path = available_models[selected_model_label]
+        model_path  = selected_model_path
+        model_ready = os.path.exists(selected_model_path)
 
     if not model_ready:
         st.info("ℹ️ No `model.pkl` found — Enhancement tab fully works. "
                 "Complete Step 6 to unlock the Detection tab.")
+
+
 
     uploaded_files = st.file_uploader(
         "📂 Upload underwater images (JPG, PNG)",

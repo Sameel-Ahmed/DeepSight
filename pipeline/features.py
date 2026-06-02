@@ -2,12 +2,14 @@
 features.py — Handcrafted feature extraction for classification.
 1872 features per image: RGB stats (12) + colour histograms (48) + Multi-Scale LBP (48) + HOG (1764).
 """
+import os
 import cv2
 import numpy as np
 from skimage.feature import local_binary_pattern, hog
 from scipy.stats import skew, kurtosis
 from pipeline.enhancement import enhance_image
 from pipeline.detection import detect_salient_object, detect_from_mask
+
 
 
 FEATURE_DIM = 1872  # 12 (RGB) + 48 (Hist) + 48 (Multi-Scale LBP) + 1764 (HOG)
@@ -114,3 +116,45 @@ def build_feature_matrix(image_paths: list,
     X_arr = np.array(X, dtype=np.float32)
     y_arr = np.array(y, dtype=np.int32) if labels is not None else None
     return X_arr, y_arr
+
+
+# ── Feature Cache (disk persistence) ─────────────────────────────────────────
+
+def save_features(X: np.ndarray, y: np.ndarray,
+                  class_names: list, dataset_path: str,
+                  cache_path: str = 'data/features.npz'):
+    """
+    Save the feature matrix, labels, class names, and source dataset path
+    to a compressed numpy archive so Step 5 can be skipped on restart.
+    """
+    os.makedirs(os.path.dirname(cache_path) or '.', exist_ok=True)
+    np.savez_compressed(
+        cache_path,
+        X=X,
+        y=y,
+        class_names=np.array(class_names, dtype=object),
+        dataset_path=np.array([dataset_path], dtype=object),
+    )
+
+
+def load_features(cache_path: str = 'data/features.npz') -> dict | None:
+    """
+    Load a previously saved feature cache.
+
+    Returns a dict with keys:
+        X, y, class_names, dataset_path
+    or None if the file does not exist.
+    """
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        data = np.load(cache_path, allow_pickle=True)
+        return {
+            'X':            data['X'].astype(np.float32),
+            'y':            data['y'].astype(np.int32),
+            'class_names':  list(data['class_names']),
+            'dataset_path': str(data['dataset_path'][0]),
+        }
+    except Exception:
+        return None
+

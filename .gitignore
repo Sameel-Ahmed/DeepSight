@@ -2,9 +2,11 @@
 data/
 runs/
 *.pt
+*.pkl
 *.zip
 *.tar.gz
 *.csv
+
 
 # Python
 __pycache__/
